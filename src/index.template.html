@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>PNG Animator</title>
+<!-- The dc-runtime evaluates the x-dc component logic through new Function,
+     so script-src cannot drop unsafe-eval. Everything else is closed: no
+     network origin is reachable, and only bundled files can be loaded. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' blob: data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>window.__resources = {
+  "https://unpkg.com/react@18.3.1/umd/react.production.min.js": "vendor/react.production.min.js",
+  "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js": "vendor/react-dom.production.min.js"
+};</script>
+<script src="vendor/dc-runtime.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/* cyrillic-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/14b207d5-a2fa-487b-b5fd-48e2c331672d.woff2") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/b0c3da77-387e-4ccc-9be1-7e751d881828.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/a9d432ce-3687-4b17-b1f8-95c9f20cd71a.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/9984f73d-ac0a-429a-a216-6a770087d29f.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/fonts/27cd89da-80ef-4be1-ae7d-f48f1d7e838e.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/110d2b36-c3c2-4753-81fa-c35aca516983.woff2") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/03f6bee1-66a4-4ce2-b66a-2d8783569bc3.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/64fe5612-e5a2-4359-a5fb-a4925de9a5e4.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/d7ac4c92-911f-4c34-b8f6-07a952a980b5.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/fonts/3393d935-0310-49dc-bd5e-6d1aa0974320.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/41bfb02b-78d4-41b4-b1e0-6252772695df.woff2") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/be93c3ff-2298-4b91-b484-b12f8668a3eb.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/12f8134a-7e95-4fbe-ac24-7b48306397ab.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/fe9e1f6b-2b1f-4d10-9d3a-06ad2ac83870.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/4d22e229-459c-4f73-a74b-64507aeee4bf.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/ac3563ad-e2b3-46d1-b50b-f73a1a8c987e.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/41bfb02b-78d4-41b4-b1e0-6252772695df.woff2") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/be93c3ff-2298-4b91-b484-b12f8668a3eb.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/12f8134a-7e95-4fbe-ac24-7b48306397ab.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/fe9e1f6b-2b1f-4d10-9d3a-06ad2ac83870.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/4d22e229-459c-4f73-a74b-64507aeee4bf.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/ac3563ad-e2b3-46d1-b50b-f73a1a8c987e.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/41bfb02b-78d4-41b4-b1e0-6252772695df.woff2") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/be93c3ff-2298-4b91-b484-b12f8668a3eb.woff2") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* greek */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/12f8134a-7e95-4fbe-ac24-7b48306397ab.woff2") format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/fe9e1f6b-2b1f-4d10-9d3a-06ad2ac83870.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/4d22e229-459c-4f73-a74b-64507aeee4bf.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/fonts/ac3563ad-e2b3-46d1-b50b-f73a1a8c987e.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
+<script src="vendor/jszip.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #0d0e10; }
+  a { color: #5cc8e8; }
+  a:hover { color: #8fdcf2; }
+  input[type=range] { accent-color: #5cc8e8; }
+</style>
+
+</helmet>
+
+<div sc-camel-on-drag-over="{{ onDragOver }}" sc-camel-on-drop="{{ onDrop }}" style="width:100%;height:100%;background:#0d0e10;color:#e7e5e2;font-family:'IBM Plex Sans',system-ui,sans-serif;padding:20px 22px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px;overflow:hidden">
+
+  <div style="display:flex;align-items:baseline;gap:16px;flex:none">
+    <h1 style="margin:0;font-size:21px;font-weight:600;letter-spacing:-0.01em">PNG Animator</h1>
+    <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#75777d">one render(ctx, t) · seeded · deterministic frame stepper</span>
+    <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#75777d;margin-left:auto">{{ presetLabel }} · {{ cw }}×{{ ch }} · {{ frameCount }} frames @ {{ fps }}fps</span>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
+
+    <div style="display:flex;flex-direction:column;gap:16px;min-height:0">
+
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.09em;color:#75777d">SOURCE</div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <div style="width:58px;height:58px;flex:none;background:#0f1113;border:1px solid #2a2d33;border-radius:3px;display:flex;align-items:center;justify-content:center;line-height:0">
+            <canvas ref="{{ thumbRef }}" width="116" height="116" style="width:54px;height:54px;display:block"></canvas>
+          </div>
+          <div style="min-width:0;flex:1">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#c9c7c4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ srcName }}</div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#75777d;margin-top:3px">{{ srcDims }}</div>
+          </div>
+          <label style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;flex:none" style-hover="background:#2c3037">load PNG…<input type="file" accept="image/png" sc-camel-on-change="{{ onFile }}" style="display:none"></label>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.09em;color:#75777d">SLICING</div>
+        <div>{{ ctlSliceMode }}</div>
+        
+        <sc-if value="{{ isGrid }}" hint-placeholder-val="{{ false }}">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>{{ ctlRows }}</div>
+            <div>{{ ctlCols }}</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ isDetect }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div>{{ ctlMinArea }}</div>
+            <div style="background:#0f1113;border:1px solid #2a2d33;border-radius:3px;padding:6px;line-height:0">
+              <canvas ref="{{ detectRef }}" width="234" height="234" style="width:100%;height:auto;display:block"></canvas>
+            </div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8b8d93">{{ detectSummary }}</div>
+            <div style="display:flex;gap:8px">
+              <button sc-camel-on-click="{{ runDetect }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;flex:1;text-align:center" style-hover="background:#2c3037">detect</button>
+              <button sc-camel-on-click="{{ acceptDetect }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;flex:1;padding:7px 12px;background:#5cc8e8;color:#07272f;border:0;border-radius:3px;cursor:pointer;font-weight:500" style-hover="background:#7ed6f0">confirm</button>
+            </div>
+          </div>
+        </sc-if>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#75777d">{{ sliceCount }} sprite(s) · base {{ baseDims }}</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.09em;color:#75777d">PRESET</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">{{ presetList }}</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box;flex:1;min-height:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.09em;color:#75777d">SAVED ANIMATIONS</div>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#75777d">{{ saveCount }}</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <input type="text" value="{{ saveName }}" sc-camel-on-change="{{ onSaveName }}" placeholder="name this look" style="flex:1;min-width:0;background:#0f1113;color:#e7e5e2;border:1px solid #2c2f35;border-radius:3px;padding:6px 8px;font-family:'IBM Plex Mono',monospace;font-size:11.5px">
+          <button sc-camel-on-click="{{ saveCurrent }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:6px 12px;background:#5cc8e8;color:#07272f;border:0;border-radius:3px;cursor:pointer;font-weight:500" style-hover="background:#7ed6f0">save</button>
+        </div>
+        <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px">
+          <sc-for list="{{ saves }}" as="item" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:#0f1113;border:1px solid #26292f;border-radius:3px">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;color:#e7e5e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.name }}</div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#75777d;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.meta }}</div>
+              </div>
+              <button sc-camel-on-click="{{ item.load }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;padding:5px 9px;font-size:10.5px" style-hover="background:#2c3037">load</button>
+              <button sc-camel-on-click="{{ item.remove }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;padding:5px 8px;font-size:10.5px;color:#8b8d93" style-hover="background:#3a2020;color:#e08a8a">✕</button>
+            </div>
+          </sc-for>
+        </div>
+        <sc-if value="{{ noSaves }}" hint-placeholder-val="{{ false }}">
+          <div style="font-size:11px;line-height:1.5;color:#75777d;text-wrap:pretty">Nothing saved yet. A save stores the preset, its parameters, the seed, canvas, duration, fps and easing — reload it any time to get the exact same animation back.</div>
+        </sc-if>
+      </div>
+
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px;min-height:0">
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box;flex:1;min-height:0;align-items:center;justify-content:center;padding:14px">
+        <sc-if value="{{ noImage }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;width:100%;height:100%;border:1px dashed #2e3138;border-radius:4px;padding:24px;box-sizing:border-box">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.08em;color:#75777d">NO ARTWORK LOADED</div>
+            <div style="font-size:12.5px;line-height:1.6;color:#8b8d93;text-align:center;max-width:280px;text-wrap:pretty">Drop a PNG anywhere on this window, or use load PNG. Transparent cutouts work best.</div>
+            <label style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:8px 16px;background:#5cc8e8;color:#07272f;border-radius:3px;cursor:pointer;font-weight:500" style-hover="background:#7ed6f0">load PNG…<input type="file" accept="image/png" sc-camel-on-change="{{ onFile }}" style="display:none"></label>
+          </div>
+        </sc-if>
+        <sc-if value="{{ hasImage }}" hint-placeholder-val="{{ false }}">
+        <div style="background-color:#141519;background-image:{{ checkerImage }};background-size:18px 18px;background-position:0 0,0 9px,9px -9px,-9px 0;border:1px solid #24262b;border-radius:3px;line-height:0;display:flex;max-height:100%">
+          <canvas ref="{{ mainRef }}" width="{{ cw }}" height="{{ ch }}" style="display:block;max-height:100%;max-width:100%;width:auto;height:auto;object-fit:contain"></canvas>
+        </div>
+        </sc-if>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box;gap:11px;flex:none">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button sc-camel-on-click="{{ togglePlay }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 13px;background:#5cc8e8;color:#07272f;border:0;border-radius:3px;cursor:pointer;font-weight:500;min-width:70px" style-hover="background:#7ed6f0">{{ playLabel }}</button>
+          <button sc-camel-on-click="{{ stepBack }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;padding:7px 10px" style-hover="background:#2c3037">◀</button>
+          <button sc-camel-on-click="{{ stepFwd }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;padding:7px 10px" style-hover="background:#2c3037">▶</button>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#9a9ca2">t {{ tLabel }} · f {{ frameLabel }}</span>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#c9c7c4;cursor:pointer;margin-left:auto">
+            <input type="checkbox" checked="{{ seamCheck }}" sc-camel-on-change="{{ toggleSeam }}" style="accent-color:#5cc8e8;width:14px;height:14px">
+            seam check
+          </label>
+        </div>
+        <input type="range" min="0" max="1" step="0.0005" value="{{ tVal }}" sc-camel-on-change="{{ onScrub }}" sc-camel-on-input="{{ onScrub }}" style="width:100%;margin:0">
+        <sc-if value="{{ seamCheck }}" hint-placeholder-val="{{ false }}">
+          <div style="font-size:11.5px;line-height:1.5;color:#8b8d93;text-wrap:pretty">Difference blend of render(0) against render(1 − 1/frames), one frame of travel apart. A clean loop shows that single frame's motion evenly — no discontinuity, no doubled or half-exited elements.</div>
+        </sc-if>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px;min-height:0">
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box;gap:9px">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.09em;color:#75777d">GLOBAL</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px 14px">
+          <div>{{ ctlCanvasPreset }}</div>
+          <div>{{ ctlFps }}</div>
+          <div>{{ ctlCw }}</div>
+          <div>{{ ctlCh }}</div>
+          <div>{{ ctlDuration }}</div>
+          <div>{{ ctlSpeed }}</div>
+          <div>{{ ctlAmp }}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <div style="flex:1">{{ ctlSeed }}</div>
+          <button sc-camel-on-click="{{ reroll }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;padding:6px 10px;font-size:11px" style-hover="background:#2c3037">reroll</button>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.09em;color:#75777d">BACKGROUND</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;align-items:end">
+          <div>{{ ctlBg }}</div>
+          <sc-if value="{{ isBgColor }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:10px">
+              <input type="color" value="{{ bgColor }}" sc-camel-on-change="{{ onBgColor }}" style="width:38px;height:26px;padding:0;background:#0f1113;border:1px solid #2c2f35;border-radius:3px;cursor:pointer">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9a9ca2">{{ bgColor }}</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ isBgImage }}" hint-placeholder-val="{{ false }}">
+            <label style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;text-align:center;overflow:hidden;text-overflow:ellipsis" style-hover="background:#2c3037">{{ bgImageLabel }}<input type="file" accept="image/*" sc-camel-on-change="{{ onBgFile }}" style="display:none"></label>
+          </sc-if>
+        </div>
+        <div style="font-size:11px;line-height:1.5;color:#75777d;text-wrap:pretty">Preview only, and composited for MP4. PNG sequence and WebM keep alpha.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box;flex:1;min-height:0">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.09em;color:#75777d">EASING</div>
+        <div>{{ ctlEase }}</div>
+        <div style="flex:1;min-height:0;display:flex;align-items:center">{{ bezierEditor }}</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8b8d93">{{ bezLabel }}</div>
+        <div style="font-size:11px;line-height:1.5;color:#75777d;text-wrap:pretty">Time warp applied before the preset. Endpoints stay pinned at 0 and 1, so the loop still closes.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px;min-height:0">
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box;gap:9px;flex:1;min-height:0;overflow:auto">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.09em;color:#75777d">{{ presetLabelUpper }}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px 14px">{{ presetControls }}</div>
+        <sc-if value="{{ showTileWarn }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;gap:9px;padding:11px 12px;background:#2a2109;border:1px solid #4a3a10;border-radius:3px">
+            <span style="color:#e0b64a;font-size:12px;line-height:1.3">⚠</span>
+            <div style="font-size:11.5px;line-height:1.5;color:#d4b978;text-wrap:pretty">Source edges don't tile — {{ borderPctLabel }} of the border is opaque, so the tile boundary will be visible. The loop still closes exactly.</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ showTileOk }}" hint-placeholder-val="{{ false }}">
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#75777d">alpha scan: {{ borderPctLabel }} of border opaque — edges tile cleanly</div>
+        </sc-if>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px;padding:13px 14px;background:#15171a;border:1px solid #23252a;border-radius:4px;box-sizing:border-box;flex:none">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px">
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.09em;color:#75777d">EXPORT</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8b8d93;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ exportName }}</div>
+        </div>
+        <button sc-camel-on-click="{{ exportPng }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:9px 12px;background:#5cc8e8;color:#07272f;border:0;border-radius:3px;cursor:pointer;font-weight:500;text-align:left" style-hover="background:#7ed6f0">PNG sequence → {{ pngTarget }} <span style="opacity:0.65">· master</span></button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <button sc-camel-on-click="{{ exportWebm }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;text-align:left" style-hover="background:#2c3037">WebM · VP9 α</button>
+          <button sc-camel-on-click="{{ exportMp4 }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;text-align:left" style-hover="background:#2c3037">MP4 · H.264</button>
+        </div>
+        <sc-if value="{{ busy }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <div style="height:4px;background:#22252a;border-radius:2px;overflow:hidden">
+              <div style="height:100%;background:#5cc8e8;width:{{ progressWidth }}"></div>
+            </div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8b8d93">{{ progressLabel }}</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ hasFfmpeg }}" hint-placeholder-val="{{ false }}">
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.6;color:#9fd8ea;background:#0f1113;border:1px solid #2a2d33;border-radius:3px;padding:9px 10px;word-break:break-all;white-space:pre-wrap;user-select:all">{{ ffmpegCmd }}</div>
+        </sc-if>
+        <div style="display:flex;gap:9px;padding:10px 12px;background:#2a2109;border:1px solid #4a3a10;border-radius:3px">
+          <span style="color:#e0b64a;font-size:12px;line-height:1.3">⚠</span>
+          <div style="font-size:11.5px;line-height:1.5;color:#d4b978;text-wrap:pretty">WebM won't import into DaVinci Resolve — unsupported container, and the alpha won't survive a remux. Use the PNG sequence there.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="">
+/*{{APP_SCRIPT}}*/
+</script>
+
+
+</body></html>

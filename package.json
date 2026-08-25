@@ -1,0 +1,51 @@
+{
+  "name": "png-animator",
+  "productName": "PNG Animator",
+  "version": "1.0.0",
+  "description": "Turn a PNG into a looping animation and export it as a PNG sequence, WebM or MP4.",
+  "author": "InkyVoid",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "build:renderer": "node tools/build-renderer.js",
+    "build:icon": "node tools/make-icon.js",
+    "start": "npm run build:renderer && electron .",
+    "dist": "npm run build:renderer && electron-builder --win nsis",
+    "dist:dir": "npm run build:renderer && electron-builder --win --dir",
+    "unpack:bundle": "node tools/unpack-bundle.js"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.pnganimator.app",
+    "productName": "PNG Animator",
+    "copyright": "Copyright © 2026 InkyVoid",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico",
+      "artifactName": "PNG-Animator-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PNG Animator",
+      "uninstallDisplayName": "PNG Animator ${version}",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
