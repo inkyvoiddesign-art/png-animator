@@ -33,6 +33,32 @@ const TAU = Math.PI * 2;
 const NATIVE = typeof window !== 'undefined' ? window.pngAnimatorNative : null;
 const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
 
+/*
+ * H.264 codec strings, most capable first. A level has to be high enough for
+ * the resolution, and there is no reliable way to compute which from here, so
+ * we ask the encoder and take the first it accepts. Profiles descend too:
+ * High is what Chromium actually ships, but Main and Baseline are tried in
+ * case a build only carries those.
+ */
+const AVC_CANDIDATES = [
+  'avc1.640034', 'avc1.640033', 'avc1.640032', 'avc1.64002a', 'avc1.640028',
+  'avc1.4d0034', 'avc1.4d0032', 'avc1.4d002a', 'avc1.4d0028',
+  'avc1.420034', 'avc1.420032', 'avc1.42002a', 'avc1.420028'
+];
+
+async function avcCodec(W, H, fps, bitrate) {
+  if (typeof VideoEncoder === 'undefined') return null;
+  for (const codec of AVC_CANDIDATES) {
+    try {
+      const probe = await VideoEncoder.isConfigSupported({
+        codec, width: W, height: H, bitrate, framerate: fps
+      });
+      if (probe && probe.supported) return codec;
+    } catch (err) { /* malformed string for this build; try the next */ }
+  }
+  return null;
+}
+
 function bezierY(p1x, p1y, p2x, p2y, x) {
   const bx = (u) => 3 * u * (1 - u) * (1 - u) * p1x + 3 * u * u * (1 - u) * p2x + u * u * u;
   const by = (u) => 3 * u * (1 - u) * (1 - u) * p1y + 3 * u * u * (1 - u) * p2y + u * u * u;
@@ -512,10 +538,95 @@ class Component extends DCLogic {
   };
 
   exportWebm = () => this.recordTo('video/webm;codecs=vp9', false, '.webm');
-  exportMp4 = () => {
-    const m = ['video/mp4;codecs=avc1.42E01E', 'video/mp4'].find((x) => window.MediaRecorder && MediaRecorder.isTypeSupported(x));
-    if (!m) { alert('MP4 recording is not supported in this browser. Export the PNG sequence and run the ffmpeg command.'); return; }
-    this.recordTo(m, true, '.mp4');
+
+  /*
+   * MediaRecorder stamps each frame with the wall-clock moment requestFrame()
+   * fired, and nothing in recordTo ever tells it a frame belongs at i/fps. The
+   * setTimeout pacing is a floor with unbounded overshoot, so the stamps drift
+   * and a "30fps" export measures about 29.58 — variable frame rate, which
+   * Resolve and Premiere refuse. WebCodecs takes the presentation time as an
+   * argument instead of inferring it, so the timestamps land exactly 1/fps
+   * apart and the muxer writes a constant frame rate.
+   */
+  exportMp4 = async () => {
+    if (this.state.busy) return;
+    const S = this.state, fps = S.fps;
+    const W = S.cw - (S.cw % 2), H = S.ch - (S.ch % 2); // H.264 needs even dimensions
+    const bitrate = 12000000;
+
+    const codec = window.Mp4Muxer ? await avcCodec(W, H, fps, bitrate) : null;
+    if (!codec) {
+      // No WebCodecs: fall back to the recorder, which still produces a
+      // playable file, just not one an editor will accept. Say so rather than
+      // handing back a bad export that looks like a good one.
+      const m = ['video/mp4;codecs=avc1.42E01E', 'video/mp4']
+        .find((x) => window.MediaRecorder && MediaRecorder.isTypeSupported(x));
+      if (!m) { alert('MP4 export is not supported in this browser. Export the PNG sequence and run the ffmpeg command.'); return; }
+      await this.recordTo(m, true, '.mp4');
+      this.setState({ ffmpegCmd: 'Recorded without WebCodecs — this file has a variable frame rate and will not import into an editor. Use the PNG sequence.' });
+      return;
+    }
+
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const g = cv.getContext('2d', { alpha: false });
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+
+    const muxer = new Mp4Muxer.Muxer({
+      target: new Mp4Muxer.ArrayBufferTarget(),
+      // frameRate lets the muxer snap timestamps to the exact frame grid.
+      video: { codec: 'avc', width: W, height: H, frameRate: fps },
+      fastStart: 'in-memory'
+    });
+
+    let failure = null;
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (err) => { failure = err; }
+    });
+    encoder.configure({
+      codec, width: W, height: H, bitrate, framerate: fps,
+      latencyMode: 'quality', // nothing here is realtime, so spend the time
+      avc: { format: 'avc' }  // avcC in-band, which is what the muxer wants
+    });
+
+    this.setState({ busy: true, progress: 0, progressLabel: 'encoding…', ffmpegCmd: '' });
+    this.flatten = 'flatten';
+    this.exporting = true;
+
+    try {
+      const n = this.frames();
+      for (let i = 0; i < n; i++) {
+        if (failure) throw failure;
+        this.render(g, i / n, W, H, true);
+        const frame = new VideoFrame(cv, {
+          timestamp: Math.round((i * 1000000) / fps),
+          duration: Math.round(1000000 / fps)
+        });
+        // A keyframe a second keeps scrubbing responsive in an editor without
+        // paying for an all-intra file.
+        encoder.encode(frame, { keyFrame: i % Math.max(1, Math.round(fps)) === 0 });
+        frame.close();
+        this.setState({ progress: (i + 1) / n, progressLabel: 'frame ' + (i + 1) + ' / ' + n });
+        // Hand the queue back to the encoder so it drains and the window
+        // keeps painting; without this the whole export blocks the frame.
+        while (encoder.encodeQueueSize > 8 && !failure) {
+          await new Promise((r) => setTimeout(r, 4));
+        }
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      await encoder.flush();
+      if (failure) throw failure;
+      muxer.finalize();
+      this.save(new Blob([muxer.target.buffer], { type: 'video/mp4' }), '.mp4');
+    } catch (err) {
+      alert('MP4 encoding failed: ' + (err && err.message ? err.message : err) +
+        '\n\nExport the PNG sequence and run the ffmpeg command instead.');
+    } finally {
+      if (encoder.state !== 'closed') encoder.close();
+      this.exporting = false; this.flatten = false;
+      this.setState({ busy: false, progressLabel: '' });
+    }
   };
 
   persist(saves) {
