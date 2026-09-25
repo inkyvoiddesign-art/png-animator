@@ -58,7 +58,7 @@ class Component extends DCLogic {
     playing: true, t: 0, seamCheck: false,
     preset: 'rain',
     duration: 3, fps: 30, cw: 1080, ch: 1920, canvasPreset: '1080×1920 vertical',
-    speed: 1, amp: 1, seed: 1337, offX: 0, offY: 0,
+    speed: 1, amp: 1, scale: 1, seed: 1337, offX: 0, offY: 0,
     ease: 'linear', bez: [0.42, 0.0, 0.58, 1.0],
     bg: 'transparent', bgColor: '#0b0b12', bgImageName: 'load image…',
     sliceMode: 'whole', rows: 2, cols: 2, minArea: 0.4,
@@ -290,7 +290,7 @@ class Component extends DCLogic {
     for (let i = 0; i < count; i++) {
       const q = this.parts[i];
       const sc = lerp(p.scaleMin, p.scaleMax, q.rScale);
-      const w = W * sc, h = w * (this.baseH / this.baseW);
+      const w = W * sc * S.scale, h = w * (this.baseH / this.baseW);
       const fade = lerp(1, q.rScale, clamp(p.depthFade, 0, 1));
       const op = clamp(lerp(p.opMin, p.opMax, fade), 0, 1);
       const rot = q.rRot * (p.rot * Math.PI / 180);
@@ -335,7 +335,7 @@ class Component extends DCLogic {
       : [{ k: p.tileScale, rate: Math.round(p.tiles), a: 1 }];
     const ang = (p.angle || 0) * Math.PI / 180;
     for (const L of layers) {
-      const tw = W * L.k, th = tw * (src.height / src.width);
+      const tw = W * L.k * this.state.scale, th = tw * (src.height / src.width);
       const cols = Math.ceil(W / tw) + 2, rows = Math.ceil(H / th) + 2;
       const sign = (vertical ? p.dir === 'up' : p.dir === 'left') ? -1 : 1;
       const prog = frac(t * L.rate) * sign;
@@ -354,7 +354,7 @@ class Component extends DCLogic {
 
   rSingle(g, t, W, H, p, preset) {
     const src = this.sprites[0], A = this.state.amp;
-    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7);
+    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7) * this.state.scale;
     const w = src.width * k, h = src.height * k;
     const cx = W / 2, baseY = H / 2 + h / 2;
     let dx = 0, dy = 0, sx = 1, sy = 1, rot = 0;
@@ -488,162 +488,6 @@ class Component extends DCLogic {
     });
   };
 
-  recordTo = async (mime, flatten, ext) => {
-    if (this.state.busy) return;
-    if (!window.MediaRecorder || !MediaRecorder.isTypeSupported(mime)) {
-      this.setState({ progressLabel: '' });
-      alert(mime + ' is not supported in this browser. Use the PNG sequence.');
-      return;
-    }
-    const S = this.state, fps = S.fps;
-    const W = flatten ? S.cw - (S.cw % 2) : S.cw, H = flatten ? S.ch - (S.ch % 2) : S.ch;
-    const cv = document.createElement('canvas');
-    cv.width = W; cv.height = H;
-    const g = cv.getContext('2d', { alpha: !flatten });
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    const stream = cv.captureStream(0);
-    const track = stream.getVideoTracks()[0];
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12000000 });
-    const chunks = [];
-    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-    const done = new Promise((res) => { rec.onstop = res; });
-    this.setState({ busy: true, progress: 0, progressLabel: 'encoding…', ffmpegCmd: '' });
-    this.flatten = flatten ? 'flatten' : false;
-    this.exporting = true;
-    rec.start();
-    const n = this.frames();
-    for (let i = 0; i < n; i++) {
-      this.render(g, i / n, W, H, true);
-      track.requestFrame();
-      this.setState({ progress: (i + 1) / n, progressLabel: 'frame ' + (i + 1) + ' / ' + n });
-      await new Promise((r) => setTimeout(r, Math.max(8, 1000 / fps)));
-    }
-    rec.stop();
-    await done;
-    this.exporting = false; this.flatten = false;
-    this.save(new Blob(chunks, { type: mime }), ext);
-    this.setState({ busy: false, progressLabel: '' });
-  };
-
-  /*
-   * Same story as the MP4 below — MediaRecorder timestamps by wall clock and
-   * silently drops frames it can't keep up with, which for a loop is worse
-   * than the wrong frame rate: a dropped frame is missing animation. The
-   * catch is transparency. Chromium's VideoEncoder refuses alpha:'keep' for
-   * every codec, so WebM alpha has to be a second encoded stream carried
-   * beside the colour one; mediabunny does that split and the muxing, and its
-   * add() resolves on encoder backpressure, so nothing is ever dropped.
-   */
-  exportWebm = async () => {
-    if (this.state.busy) return;
-    const S = this.state, fps = S.fps, MB = window.Mediabunny;
-    if (!MB) {
-      await this.recordTo('video/webm;codecs=vp9', false, '.webm');
-      this.setState({ ffmpegCmd: 'Recorded without mediabunny — this file has a variable frame rate and may be missing frames. Use the PNG sequence.' });
-      return;
-    }
-
-    // Both the colour and alpha streams are 4:2:0, which halves the chroma
-    // planes, so odd dimensions have nowhere to round to.
-    const W = S.cw - (S.cw % 2), H = S.ch - (S.ch % 2);
-    const cv = document.createElement('canvas');
-    cv.width = W; cv.height = H;
-    const g = cv.getContext('2d', { alpha: true });
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-
-    this.setState({ busy: true, progress: 0, progressLabel: 'encoding…', ffmpegCmd: '' });
-    this.flatten = false; // transparency is the whole point of this export
-    this.exporting = true;
-
-    try {
-      const output = new MB.Output({
-        format: new MB.WebMOutputFormat(),
-        target: new MB.BufferTarget()
-      });
-      const source = new MB.CanvasSource(cv, {
-        codec: 'vp9', bitrate: 12000000, alpha: 'keep'
-      });
-      output.addVideoTrack(source, { frameRate: fps });
-      await output.start();
-
-      const n = this.frames();
-      for (let i = 0; i < n; i++) {
-        this.render(g, i / n, W, H, true);
-        // Resolves once the encoder is ready for more, so the loop can never
-        // outrun it and lose a frame.
-        await source.add(i / fps, 1 / fps);
-        this.setState({ progress: (i + 1) / n, progressLabel: 'frame ' + (i + 1) + ' / ' + n });
-      }
-      await output.finalize();
-      this.save(new Blob([output.target.buffer], { type: 'video/webm' }), '.webm');
-    } catch (err) {
-      alert('WebM encoding failed: ' + (err && err.message ? err.message : err) +
-        '\n\nExport the PNG sequence instead.');
-    } finally {
-      this.exporting = false; this.flatten = false;
-      this.setState({ busy: false, progressLabel: '' });
-    }
-  };
-
-  /*
-   * MediaRecorder stamps each frame with the wall-clock moment requestFrame()
-   * fired, and nothing in recordTo ever tells it a frame belongs at i/fps. The
-   * setTimeout pacing is a floor with unbounded overshoot, so the stamps drift
-   * and a "30fps" export measures about 29.58 — variable frame rate, which
-   * Resolve and Premiere refuse. WebCodecs takes the presentation time as an
-   * argument instead of inferring it, so the timestamps land exactly 1/fps
-   * apart and the muxer writes a constant frame rate.
-   */
-  exportMp4 = async () => {
-    if (this.state.busy) return;
-    const S = this.state, fps = S.fps, MB = window.Mediabunny;
-    if (!MB) {
-      const m = ['video/mp4;codecs=avc1.42E01E', 'video/mp4']
-        .find((x) => window.MediaRecorder && MediaRecorder.isTypeSupported(x));
-      if (!m) { alert('MP4 export is not supported in this browser. Export the PNG sequence and run the ffmpeg command.'); return; }
-      await this.recordTo(m, true, '.mp4');
-      this.setState({ ffmpegCmd: 'Recorded without mediabunny — this file has a variable frame rate and may be missing frames. Use the PNG sequence.' });
-      return;
-    }
-
-    const W = S.cw - (S.cw % 2), H = S.ch - (S.ch % 2); // H.264 needs even dimensions
-    const cv = document.createElement('canvas');
-    cv.width = W; cv.height = H;
-    const g = cv.getContext('2d', { alpha: false });
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-
-    this.setState({ busy: true, progress: 0, progressLabel: 'encoding…', ffmpegCmd: '' });
-    this.flatten = 'flatten'; // MP4 has no alpha, so composite the background
-    this.exporting = true;
-
-    try {
-      const output = new MB.Output({
-        format: new MB.Mp4OutputFormat({ fastStart: 'in-memory' }),
-        target: new MB.BufferTarget()
-      });
-      const source = new MB.CanvasSource(cv, {
-        codec: 'avc', bitrate: 12000000, alpha: 'discard'
-      });
-      output.addVideoTrack(source, { frameRate: fps });
-      await output.start();
-
-      const n = this.frames();
-      for (let i = 0; i < n; i++) {
-        this.render(g, i / n, W, H, true);
-        await source.add(i / fps, 1 / fps);
-        this.setState({ progress: (i + 1) / n, progressLabel: 'frame ' + (i + 1) + ' / ' + n });
-      }
-      await output.finalize();
-      this.save(new Blob([output.target.buffer], { type: 'video/mp4' }), '.mp4');
-    } catch (err) {
-      alert('MP4 encoding failed: ' + (err && err.message ? err.message : err) +
-        '\n\nExport the PNG sequence and run the ffmpeg command instead.');
-    } finally {
-      this.exporting = false; this.flatten = false;
-      this.setState({ busy: false, progressLabel: '' });
-    }
-  };
-
   persist(saves) {
     this.setState({ saves });
     try { localStorage.setItem('pngAnimator.saves', JSON.stringify(saves)); } catch (e) {}
@@ -655,7 +499,7 @@ class Component extends DCLogic {
       preset: S.preset, duration: S.duration, fps: S.fps, cw: S.cw, ch: S.ch,
       canvasPreset: S.canvasPreset, speed: S.speed, amp: S.amp, seed: S.seed,
       ease: S.ease, bez: S.bez.slice(), sliceMode: S.sliceMode,
-      offX: S.offX, offY: S.offY,
+      scale: S.scale, offX: S.offX, offY: S.offY,
       params: Object.assign({}, S[S.preset])
     };
   }
@@ -665,7 +509,7 @@ class Component extends DCLogic {
     this.setState({
       jsonText: JSON.stringify({
         preset: S.preset, duration: S.duration, fps: S.fps, canvas: [S.cw, S.ch],
-        speed: S.speed, amp: S.amp, seed: S.seed, offX: S.offX, offY: S.offY,
+        speed: S.speed, amp: S.amp, scale: S.scale, seed: S.seed, offX: S.offX, offY: S.offY,
         ease: S.ease, bez: S.bez,
         sliceMode: S.sliceMode, params: S[S.preset]
       }, null, 2)
@@ -870,6 +714,7 @@ class Component extends DCLogic {
       ctlFps: this.select('fps', S.fps, [24, 30, 60], this.set('fps')),
       ctlSpeed: this.slider('Master speed (preview)', S.speed, 0.25, 3, 0.05, this.set('speed')),
       ctlAmp: this.slider('Master amplitude', S.amp, 0, 2, 0.05, this.set('amp')),
+      ctlScale: this.slider('Master scale', S.scale, 0.1, 3, 0.05, this.set('scale')),
       ctlSeed: this.row('Seed', React.createElement('input', {
         type: 'number', value: S.seed,
         onChange: (e) => this.setState({ seed: Math.round(Number(e.target.value)) || 0 }, () => { this.build(); this.syncJson(); }),
@@ -906,7 +751,7 @@ class Component extends DCLogic {
 
       exportName: this.name(),
       pngTarget: NATIVE ? 'folder' : 'zip',
-      exportPng: this.exportPng, exportWebm: this.exportWebm, exportMp4: this.exportMp4,
+      exportPng: this.exportPng,
       busy: S.busy, progressWidth: Math.round(S.progress * 100) + '%', progressLabel: S.progressLabel,
       hasFfmpeg: !!S.ffmpegCmd, ffmpegCmd: S.ffmpegCmd,
 
@@ -930,7 +775,7 @@ class Component extends DCLogic {
             preset: s.preset, duration: s.duration, fps: s.fps, cw: s.cw, ch: s.ch,
             canvasPreset: s.canvasPreset || 'custom', speed: s.speed, amp: s.amp,
             seed: s.seed, ease: s.ease, bez: s.bez.slice(), sliceMode: s.sliceMode,
-            offX: s.offX || 0, offY: s.offY || 0
+            scale: s.scale || 1, offX: s.offX || 0, offY: s.offY || 0
           };
           patch[s.preset] = Object.assign({}, this.state[s.preset], s.params);
           this.setState(patch, () => { this.build(); this.slice(); this.syncJson(); });
@@ -943,7 +788,7 @@ class Component extends DCLogic {
         try {
           const o = JSON.parse(S.jsonText);
           const patch = {};
-          ['preset', 'duration', 'fps', 'speed', 'amp', 'seed', 'offX', 'offY', 'ease', 'sliceMode'].forEach((k) => { if (o[k] !== undefined) patch[k] = o[k]; });
+          ['preset', 'duration', 'fps', 'speed', 'amp', 'scale', 'seed', 'offX', 'offY', 'ease', 'sliceMode'].forEach((k) => { if (o[k] !== undefined) patch[k] = o[k]; });
           if (Array.isArray(o.canvas)) { patch.cw = o.canvas[0]; patch.ch = o.canvas[1]; patch.canvasPreset = 'custom'; }
           if (Array.isArray(o.bez)) patch.bez = o.bez;
           const target = o.preset || S.preset;

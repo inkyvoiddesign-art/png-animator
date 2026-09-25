@@ -17,8 +17,7 @@
   },
   "devDependencies": {
     "electron": "^43.0.0",
-    "electron-builder": "^26.0.12",
-    "mediabunny": "^1.60.0"
+    "electron-builder": "^26.0.12"
   },
   "build": {
     "appId": "com.pnganimator.app",

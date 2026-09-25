@@ -1,7 +1,7 @@
 # PNG Animator
 
 A desktop build of the PNG Animator tool: load a PNG, pick a motion preset, and
-export a looping animation as a PNG sequence, WebM, or MP4.
+export a looping animation as an alpha PNG sequence.
 
 ## Running it
 
@@ -60,7 +60,6 @@ Anything the page can do natively goes through `electron/preload.js`:
 | --- | --- |
 | **File → Open Image** (`Ctrl+O`) | Native open dialog, reopening in the last folder used. Drag-and-drop and the in-page load buttons still work. |
 | **PNG sequence** | Native folder picker. Frames are written straight to disk as they render — no zip, no holding the whole sequence in memory — into a subfolder named after the export. Explorer opens on the result, and the panel shows the ready-to-paste `ffmpeg` command with real absolute paths. |
-| **WebM / MP4** | Native Save As dialog, reopening in the last folder used. |
 | Window size and position | Restored on next launch, including maximised state. |
 
 `app.dc.js` checks for `window.pngAnimatorNative` and falls back to the original
@@ -88,10 +87,10 @@ discarding the desktop integration patched into them. Diff before you commit.
 
 ## Notes
 
-- MP4 export uses `MediaRecorder` with H.264. Electron ships proprietary codecs,
-  so this works in the packaged app even where a plain browser refuses it.
-- WebM keeps alpha but will not import into DaVinci Resolve. Use the PNG
-  sequence plus the `ffmpeg` ProRes 4444 command shown after export.
+- PNG sequence is the only export. Video encoders were dropped in favour of it:
+  the sequence keeps full alpha, imports into every editor, and converts to any
+  codec you need. The panel shows a ready-to-paste `ffmpeg` ProRes 4444 command
+  with real absolute paths after each export.
 - The installer is unsigned, so SmartScreen will warn on first run. Signing
   needs a code-signing certificate; add it under `build.win.certificateFile`.
 - Saved looks live in `localStorage` under the `png-animator://` origin, and
