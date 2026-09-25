@@ -33,6 +33,18 @@ const TAU = Math.PI * 2;
 const NATIVE = typeof window !== 'undefined' ? window.pngAnimatorNative : null;
 const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
 
+/*
+ * Wraps a sprite centre through one full span so it leaves one edge exactly as
+ * it re-enters the other. The span is the canvas plus one sprite, and the
+ * result is a LEFT/TOP edge, so both wrap points sit fully off-canvas and the
+ * seam is never visible. Getting this offset wrong is what used to teleport a
+ * particle across the canvas the moment sway carried it past an edge.
+ */
+const wrapAxis = (centre, extent, size) => {
+  const span = extent + size;
+  return frac((centre + size / 2) / span) * span - size;
+};
+
 function bezierY(p1x, p1y, p2x, p2y, x) {
   const bx = (u) => 3 * u * (1 - u) * (1 - u) * p1x + 3 * u * u * (1 - u) * p2x + u * u * u;
   const by = (u) => 3 * u * (1 - u) * (1 - u) * p1y + 3 * u * u * (1 - u) * p2y + u * u * u;
@@ -46,7 +58,7 @@ class Component extends DCLogic {
     playing: true, t: 0, seamCheck: false,
     preset: 'rain',
     duration: 3, fps: 30, cw: 1080, ch: 1920, canvasPreset: '1080×1920 vertical',
-    speed: 1, amp: 1, seed: 1337,
+    speed: 1, amp: 1, seed: 1337, offX: 0, offY: 0,
     ease: 'linear', bez: [0.42, 0.0, 0.58, 1.0],
     bg: 'transparent', bgColor: '#0b0b12', bgImageName: 'load image…',
     sliceMode: 'whole', rows: 2, cols: 2, minArea: 0.4,
@@ -287,15 +299,16 @@ class Component extends DCLogic {
       const swayAmp = q.rSway * p.sway * W * A;
       const sway = swayAmp * Math.sin(TAU * (t * q.cycles + q.swayPhase));
       const wind = Math.round(p.wind) * t * (horiz ? H : W);
+      const offX = S.offX * W, offY = S.offY * H;
       let x, y;
       if (horiz) {
-        const span = W + w, prog = p.dir === 'left' ? 1 - along : along;
-        x = prog * span - w;
-        y = frac((q.x0 * H + sway + wind) / (H + h)) * (H + h) - h / 2;
+        const prog = p.dir === 'left' ? 1 - along : along;
+        x = wrapAxis(prog * (W + w) - w / 2 + offX, W, w);
+        y = wrapAxis(q.x0 * H + sway + wind + offY, H, h);
       } else {
-        const span = H + h, prog = p.dir === 'up' ? 1 - along : along;
-        y = prog * span - h;
-        x = frac((q.x0 * W + sway + wind) / (W + w)) * (W + w) - w / 2;
+        const prog = p.dir === 'up' ? 1 - along : along;
+        y = wrapAxis(prog * (H + h) - h / 2 + offY, H, h);
+        x = wrapAxis(q.x0 * W + sway + wind + offX, W, w);
       }
       const spr = this.sprites[Math.floor(q.s * this.sprites.length) % this.sprites.length];
       g.save();
@@ -328,8 +341,9 @@ class Component extends DCLogic {
       const prog = frac(t * L.rate) * sign;
       const main = vertical ? prog * th : prog * tw;
       const cross = vertical ? Math.tan(ang) * main : Math.tan(ang) * main;
-      const ox = vertical ? frac(cross / tw) * tw : frac(main / tw) * tw;
-      const oy = vertical ? frac(main / th) * th : frac(cross / th) * th;
+      const offX = this.state.offX * W, offY = this.state.offY * H;
+      const ox = frac(((vertical ? cross : main) + offX) / tw) * tw;
+      const oy = frac(((vertical ? main : cross) + offY) / th) * th;
       g.globalAlpha = L.a;
       for (let cx = -1; cx < cols; cx++)
         for (let cy = -1; cy < rows; cy++)
@@ -370,7 +384,7 @@ class Component extends DCLogic {
       sx = s; sy = s;
     }
     g.save();
-    g.translate(cx + dx, baseY + dy);
+    g.translate(cx + dx + this.state.offX * W, baseY + dy + this.state.offY * H);
     g.rotate(rot);
     g.scale(sx, sy);
     g.drawImage(src, -w / 2, -h, w, h);
@@ -641,6 +655,7 @@ class Component extends DCLogic {
       preset: S.preset, duration: S.duration, fps: S.fps, cw: S.cw, ch: S.ch,
       canvasPreset: S.canvasPreset, speed: S.speed, amp: S.amp, seed: S.seed,
       ease: S.ease, bez: S.bez.slice(), sliceMode: S.sliceMode,
+      offX: S.offX, offY: S.offY,
       params: Object.assign({}, S[S.preset])
     };
   }
@@ -650,7 +665,8 @@ class Component extends DCLogic {
     this.setState({
       jsonText: JSON.stringify({
         preset: S.preset, duration: S.duration, fps: S.fps, canvas: [S.cw, S.ch],
-        speed: S.speed, amp: S.amp, seed: S.seed, ease: S.ease, bez: S.bez,
+        speed: S.speed, amp: S.amp, seed: S.seed, offX: S.offX, offY: S.offY,
+        ease: S.ease, bez: S.bez,
         sliceMode: S.sliceMode, params: S[S.preset]
       }, null, 2)
     });
@@ -859,6 +875,10 @@ class Component extends DCLogic {
         onChange: (e) => this.setState({ seed: Math.round(Number(e.target.value)) || 0 }, () => { this.build(); this.syncJson(); }),
         style: { width: '100%', boxSizing: 'border-box', background: '#0f1113', color: '#e7e5e2', border: '1px solid #2c2f35', borderRadius: 3, padding: '5px 7px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 12 }
       })),
+      ctlOffX: this.slider('Offset X', S.offX, -0.5, 0.5, 0.005, this.set('offX')),
+      ctlOffY: this.slider('Offset Y', S.offY, -0.5, 0.5, 0.005, this.set('offY')),
+      recentre: () => this.setState({ offX: 0, offY: 0 }, () => this.syncJson()),
+      isOffset: S.offX !== 0 || S.offY !== 0,
       reroll: () => this.setState({ seed: Math.floor(Math.random() * 100000) }, () => { this.build(); this.syncJson(); }),
 
       ctlEase: this.select('Curve', S.ease, ['linear', 'ease-in-out', 'elastic', 'custom'],
@@ -909,7 +929,8 @@ class Component extends DCLogic {
           const patch = {
             preset: s.preset, duration: s.duration, fps: s.fps, cw: s.cw, ch: s.ch,
             canvasPreset: s.canvasPreset || 'custom', speed: s.speed, amp: s.amp,
-            seed: s.seed, ease: s.ease, bez: s.bez.slice(), sliceMode: s.sliceMode
+            seed: s.seed, ease: s.ease, bez: s.bez.slice(), sliceMode: s.sliceMode,
+            offX: s.offX || 0, offY: s.offY || 0
           };
           patch[s.preset] = Object.assign({}, this.state[s.preset], s.params);
           this.setState(patch, () => { this.build(); this.slice(); this.syncJson(); });
@@ -922,7 +943,7 @@ class Component extends DCLogic {
         try {
           const o = JSON.parse(S.jsonText);
           const patch = {};
-          ['preset', 'duration', 'fps', 'speed', 'amp', 'seed', 'ease', 'sliceMode'].forEach((k) => { if (o[k] !== undefined) patch[k] = o[k]; });
+          ['preset', 'duration', 'fps', 'speed', 'amp', 'seed', 'offX', 'offY', 'ease', 'sliceMode'].forEach((k) => { if (o[k] !== undefined) patch[k] = o[k]; });
           if (Array.isArray(o.canvas)) { patch.cw = o.canvas[0]; patch.ch = o.canvas[1]; patch.canvasPreset = 'custom'; }
           if (Array.isArray(o.bez)) patch.bez = o.bez;
           const target = o.preset || S.preset;
