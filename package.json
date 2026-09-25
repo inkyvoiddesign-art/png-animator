@@ -1,7 +1,7 @@
 {
   "name": "png-animator",
   "productName": "PNG Animator",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Turn a PNG into a looping animation and export it as a PNG sequence, WebM or MP4.",
   "author": "InkyVoid",
   "license": "UNLICENSED",
