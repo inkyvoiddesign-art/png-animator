@@ -49,6 +49,53 @@ const wrapAxis = (centre, extent, size) => {
 
 /* A cubic Bezier in the plane: P is [x0,y0, c1x,c1y, c2x,c2y, x1,y1] in
    normalised canvas coordinates. The Path preset walks this curve. */
+/*
+ * Keyframes live on the loop, not on a line: after the last key the value
+ * travels back round to the first. That wrap is what keeps a keyframed
+ * parameter loop-safe - however you place the keys, the value at t=1 is the
+ * value at t=0, so the animation still closes.
+ *
+ * keys is [[t, value], ...] sorted by t, with t in [0,1).
+ */
+function sampleKeys(keys, t) {
+  const n = keys.length;
+  if (!n) return 0;
+  if (n === 1) return keys[0][1];
+  const u = frac(t);
+  let i = -1;
+  for (let k = 0; k < n; k++) { if (keys[k][0] <= u) i = k; else break; }
+  let a, b, span, local;
+  if (i < 0) {                       // before the first key: coming round the seam
+    a = keys[n - 1]; b = keys[0];
+    span = (1 - a[0]) + b[0];
+    local = span <= 0 ? 0 : (u + (1 - a[0])) / span;
+  } else if (i === n - 1) {          // after the last: heading into the seam
+    a = keys[n - 1]; b = keys[0];
+    span = (1 - a[0]) + b[0];
+    local = span <= 0 ? 0 : (u - a[0]) / span;
+  } else {
+    a = keys[i]; b = keys[i + 1];
+    span = b[0] - a[0];
+    local = span <= 0 ? 0 : (u - a[0]) / span;
+  }
+  return lerp(a[1], b[1], clamp(local, 0, 1));
+}
+
+/* Replace the key at this time if there is one, otherwise insert in order. */
+function upsertKey(keys, t, v) {
+  const out = (keys || []).filter((k) => Math.abs(k[0] - t) > 0.0005);
+  out.push([t, v]);
+  out.sort((a, b) => a[0] - b[0]);
+  return out;
+}
+function removeKeyAt(keys, t) {
+  const out = (keys || []).filter((k) => Math.abs(k[0] - t) > 0.0005);
+  return out.length ? out : null;
+}
+function keyAt(keys, t) {
+  return !!(keys || []).some((k) => Math.abs(k[0] - t) <= 0.0005);
+}
+
 function bezPoint(P, u) {
   const m = 1 - u, a = m * m * m, b = 3 * m * m * u, c = 3 * m * u * u, d = u * u * u;
   return [a * P[0] + b * P[2] + c * P[4] + d * P[6], a * P[1] + b * P[3] + c * P[5] + d * P[7]];
@@ -94,9 +141,11 @@ class Component extends DCLogic {
     flag: { fit: 0.8, strips: 28, amp: 0.05, waves: 1, cycles: 1, axis: 'x', taper: 0 },
     path: { fit: 0.5, pts: [0.12, 0.5, 0.3, 0.12, 0.7, 0.88, 0.88, 0.5], loop: 'ping-pong', orient: false, spin: 0 },
     busy: false, progress: 0, progressLabel: '', ffmpegCmd: '',
-    saves: [], saveName: '', update: null,
+    saves: [], saveName: '', update: null, masterKeys: {},
     jsonText: '', jsonHint: 'Current preset + global settings. Edit and hit apply to restore a look.'
   };
+
+  rt = { amp: 1, scale: 1, offX: 0, offY: 0 };
 
   mainRef = React.createRef();
   srcImgRef = React.createRef();
@@ -303,8 +352,14 @@ class Component extends DCLogic {
     const S = this.state;
     if (clear) g.clearRect(0, 0, W, H);
     this.drawBg(g, W, H, this.flatten);
-    const t = this.ease(frac(rawT));
-    const p = S[S.preset];
+    /* Keyframes are read at the raw timeline position, because that is where
+       the scrubber put them. Motion is read at the eased position. Sampling
+       keys through the easing curve would slide every key off the frame it
+       was set on. */
+    const kt = frac(rawT);
+    const t = this.ease(kt);
+    this.rt = this.resolveMaster(kt);
+    const p = this.resolveParams(S[S.preset], kt);
     if (S.preset === 'rain') return this.rRain(g, t, W, H, p);
     if (S.preset === 'scrollV' || S.preset === 'scrollH') return this.rScroll(g, t, W, H, p, S.preset === 'scrollV');
     if (S.preset === 'orbit') return this.rOrbit(g, t, W, H, p);
@@ -316,14 +371,34 @@ class Component extends DCLogic {
     return this.rSingle(g, t, W, H, p, S.preset);
   }
 
+  /* A shallow copy of the preset params with every keyframed one replaced by
+     its value at this point in the loop. Renderers stay unchanged - they still
+     just read p.whatever. */
+  resolveParams(p, t) {
+    const keys = p && p._keys;
+    if (!keys) return p;
+    const out = Object.assign({}, p);
+    for (const k in keys) {
+      const arr = keys[k];
+      if (arr && arr.length) out[k] = sampleKeys(arr, t);
+    }
+    return out;
+  }
+
+  resolveMaster(t) {
+    const S = this.state, mk = S.masterKeys || {};
+    const pick = (name) => (mk[name] && mk[name].length ? sampleKeys(mk[name], t) : S[name]);
+    return { amp: pick('amp'), scale: pick('scale'), offX: pick('offX'), offY: pick('offY') };
+  }
+
   rRain(g, t, W, H, p) {
-    const S = this.state, A = S.amp;
+    const S = this.state, A = this.rt.amp;
     const horiz = p.dir === 'left' || p.dir === 'right';
     const count = Math.min(Math.round(p.count), this.parts.length);
     for (let i = 0; i < count; i++) {
       const q = this.parts[i];
       const sc = lerp(p.scaleMin, p.scaleMax, q.rScale);
-      const w = W * sc * S.scale, h = w * (this.baseH / this.baseW);
+      const w = W * sc * this.rt.scale, h = w * (this.baseH / this.baseW);
       const fade = lerp(1, q.rScale, clamp(p.depthFade, 0, 1));
       const op = clamp(lerp(p.opMin, p.opMax, fade), 0, 1);
       const rot = q.rRot * (p.rot * Math.PI / 180);
@@ -332,7 +407,7 @@ class Component extends DCLogic {
       const swayAmp = q.rSway * p.sway * W * A;
       const sway = swayAmp * Math.sin(TAU * (t * q.cycles + q.swayPhase));
       const wind = Math.round(p.wind) * t * (horiz ? H : W);
-      const offX = S.offX * W, offY = S.offY * H;
+      const offX = this.rt.offX * W, offY = this.rt.offY * H;
       let x, y;
       if (horiz) {
         const prog = p.dir === 'left' ? 1 - along : along;
@@ -368,13 +443,13 @@ class Component extends DCLogic {
       : [{ k: p.tileScale, rate: Math.round(p.tiles), a: 1 }];
     const ang = (p.angle || 0) * Math.PI / 180;
     for (const L of layers) {
-      const tw = W * L.k * this.state.scale, th = tw * (src.height / src.width);
+      const tw = W * L.k * this.rt.scale, th = tw * (src.height / src.width);
       const cols = Math.ceil(W / tw) + 2, rows = Math.ceil(H / th) + 2;
       const sign = (vertical ? p.dir === 'up' : p.dir === 'left') ? -1 : 1;
       const prog = frac(t * L.rate) * sign;
       const main = vertical ? prog * th : prog * tw;
       const cross = vertical ? Math.tan(ang) * main : Math.tan(ang) * main;
-      const offX = this.state.offX * W, offY = this.state.offY * H;
+      const offX = this.rt.offX * W, offY = this.rt.offY * H;
       const ox = frac(((vertical ? cross : main) + offX) / tw) * tw;
       const oy = frac(((vertical ? main : cross) + offY) / th) * th;
       g.globalAlpha = L.a;
@@ -386,8 +461,8 @@ class Component extends DCLogic {
   }
 
   rSingle(g, t, W, H, p, preset) {
-    const src = this.sprites[0], A = this.state.amp;
-    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7) * this.state.scale;
+    const src = this.sprites[0], A = this.rt.amp;
+    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7) * this.rt.scale;
     const w = src.width * k, h = src.height * k;
     const cx = W / 2, baseY = H / 2 + h / 2;
     let dx = 0, dy = 0, sx = 1, sy = 1, rot = 0;
@@ -422,7 +497,7 @@ class Component extends DCLogic {
       sx = s; sy = s;
     }
     g.save();
-    g.translate(cx + dx + this.state.offX * W, baseY + dy + this.state.offY * H);
+    g.translate(cx + dx + this.rt.offX * W, baseY + dy + this.rt.offY * H);
     g.rotate(rot);
     g.scale(sx, sy);
     g.drawImage(src, -w / 2, -h, w, h);
@@ -441,9 +516,9 @@ class Component extends DCLogic {
   // Sprites riding an ellipse. The size and opacity swing between the near and
   // far halves is what sells it as a ring rather than a flat circle.
   rOrbit(g, t, W, H, p) {
-    const S = this.state, A = S.amp;
+    const S = this.state, A = this.rt.amp;
     const count = Math.min(Math.round(p.count), this.parts.length);
-    const cx = W / 2 + S.offX * W, cy = H / 2 + S.offY * H;
+    const cx = W / 2 + this.rt.offX * W, cy = H / 2 + this.rt.offY * H;
     const sign = p.dir === 'ccw' ? -1 : 1;
     const items = [];
     for (let i = 0; i < count; i++) {
@@ -463,7 +538,7 @@ class Component extends DCLogic {
     }
     items.sort((a, b) => a.dep - b.dep);
     for (const it of items) {
-      const w = W * p.size * S.scale * Math.max(0.01, it.k);
+      const w = W * p.size * this.rt.scale * Math.max(0.01, it.k);
       const h = w * (this.baseH / this.baseW);
       g.save();
       g.translate(it.x, it.y);
@@ -480,7 +555,7 @@ class Component extends DCLogic {
   rFly(g, t, W, H, p) {
     const S = this.state;
     const count = Math.min(Math.round(p.count), this.parts.length);
-    const cx = W / 2 + S.offX * W, cy = H / 2 + S.offY * H;
+    const cx = W / 2 + this.rt.offX * W, cy = H / 2 + this.rt.offY * H;
     const fade = clamp(p.fade, 0.01, 0.49);
     const items = [];
     for (let i = 0; i < count; i++) {
@@ -502,7 +577,7 @@ class Component extends DCLogic {
     }
     items.sort((a, b) => a.z - b.z);
     for (const it of items) {
-      const w = W * it.k * S.scale, h = w * (this.baseH / this.baseW);
+      const w = W * it.k * this.rt.scale, h = w * (this.baseH / this.baseW);
       g.save();
       g.translate(it.x, it.y);
       g.rotate(it.rot);
@@ -516,15 +591,15 @@ class Component extends DCLogic {
   // A grid where the pulse travels outward from the centre. Whole cycles only,
   // so the wave is back where it started at the end of the loop.
   rRipple(g, t, W, H, p) {
-    const S = this.state, A = S.amp, src = this.sprites[0];
+    const S = this.state, A = this.rt.amp, src = this.sprites[0];
     const cols = Math.max(1, Math.round(p.cols)), rows = Math.max(1, Math.round(p.rows));
     const cw = W / cols, ch = H / rows;
-    const base = Math.min(cw, ch) * p.size * S.scale;
+    const base = Math.min(cw, ch) * p.size * this.rt.scale;
     const bw = base, bh = base * (src.height / src.width);
     const cycles = Math.max(1, Math.round(p.cycles));
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        const x = cw * (c + 0.5) + S.offX * W, y = ch * (r + 0.5) + S.offY * H;
+        const x = cw * (c + 0.5) + this.rt.offX * W, y = ch * (r + 0.5) + this.rt.offY * H;
         const dx = (c + 0.5) / cols - 0.5, dy = (r + 0.5) / rows - 0.5;
         const d = Math.sqrt(dx * dx + dy * dy) * 2;
         const u = Math.sin(TAU * (t * cycles - d * p.falloff));
@@ -544,10 +619,10 @@ class Component extends DCLogic {
   rRadial(g, t, W, H, p) {
     const S = this.state, src = this.sprites[0];
     const n = Math.max(1, Math.round(p.count));
-    const cx = W / 2 + S.offX * W, cy = H / 2 + S.offY * H;
+    const cx = W / 2 + this.rt.offX * W, cy = H / 2 + this.rt.offY * H;
     const sign = p.dir === 'ccw' ? -1 : 1;
     const spin = TAU * (Math.round(p.spin) / n) * t * sign;
-    const w = W * p.size * S.scale, h = w * (src.height / src.width);
+    const w = W * p.size * this.rt.scale, h = w * (src.height / src.width);
     for (let i = 0; i < n; i++) {
       const ang = TAU * (i / n) + spin;
       g.save();
@@ -561,10 +636,10 @@ class Component extends DCLogic {
   // The sprite cut into strips, each displaced by a travelling sine. The only
   // preset that deforms the artwork rather than moving it.
   rFlag(g, t, W, H, p) {
-    const S = this.state, A = S.amp, src = this.sprites[0];
-    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7) * S.scale;
+    const S = this.state, A = this.rt.amp, src = this.sprites[0];
+    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7) * this.rt.scale;
     const w = src.width * k, h = src.height * k;
-    const x0 = W / 2 - w / 2 + S.offX * W, y0 = H / 2 - h / 2 + S.offY * H;
+    const x0 = W / 2 - w / 2 + this.rt.offX * W, y0 = H / 2 - h / 2 + this.rt.offY * H;
     const n = Math.max(2, Math.round(p.strips));
     const across = p.axis === 'x';
     const cycles = Math.max(1, Math.round(p.cycles));
@@ -589,17 +664,18 @@ class Component extends DCLogic {
   // on its own, so ping-pong retraces it and closed ties the end to the start.
   rPath(g, t, W, H, p) {
     const S = this.state, src = this.sprites[0];
-    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7) * S.scale;
+    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7) * this.rt.scale;
     const w = src.width * k, h = src.height * k;
     const P = this.pathPoints(p);
-    const u = p.loop === 'closed' ? t : (t < 0.5 ? t * 2 : 2 - t * 2);
+    const u = this.pathU(p, t);
     const pt = bezPoint(P, u);
     g.save();
-    g.translate(pt[0] * W + S.offX * W, pt[1] * H + S.offY * H);
+    g.translate(pt[0] * W + this.rt.offX * W, pt[1] * H + this.rt.offY * H);
     if (p.orient) {
       const tan = bezTangent(P, u);
       let a = Math.atan2(tan[1] * H, tan[0] * W);
-      if (p.loop !== 'closed' && t >= 0.5) a += Math.PI; // facing the way it travels
+      // Only ping-pong ever travels backwards along the curve.
+      if (p.loop === 'ping-pong' && t >= 0.5) a += Math.PI;
       g.rotate(a);
     }
     if (p.spin) g.rotate(TAU * Math.round(p.spin) * t);
@@ -607,8 +683,19 @@ class Component extends DCLogic {
     g.restore();
   }
 
-  /* In closed mode the end point becomes the start point so the curve joins
-     up. The stored points are untouched, so switching back restores them. */
+  /* In closed mode the two ends are one point, so the curve joins up. Dragging
+     either end moves both (see pathDrag), which is what makes the whole loop
+     movable rather than anchored. The stored points are untouched, so
+     switching back to an open mode restores the end where it was. */
+  /* How far along the curve at time t.
+       ping-pong  out and back, so it returns to the start on its own
+       closed     one pass round a curve whose ends meet
+       restart    one pass end to end, then a hard cut back to the start */
+  pathU(p, t) {
+    if (p.loop === 'closed' || p.loop === 'restart') return t;
+    return t < 0.5 ? t * 2 : 2 - t * 2;
+  }
+
   pathPoints(p) {
     const P = p.pts.slice();
     if (p.loop === 'closed') { P[6] = P[0]; P[7] = P[1]; }
@@ -724,6 +811,7 @@ class Component extends DCLogic {
       canvasPreset: S.canvasPreset, speed: S.speed, amp: S.amp, seed: S.seed,
       ease: S.ease, bez: S.bez.slice(), sliceMode: S.sliceMode,
       scale: S.scale, offX: S.offX, offY: S.offY,
+      masterKeys: JSON.parse(JSON.stringify(S.masterKeys || {})),
       params: Object.assign({}, S[S.preset])
     };
   }
@@ -734,6 +822,7 @@ class Component extends DCLogic {
       jsonText: JSON.stringify({
         preset: S.preset, duration: S.duration, fps: S.fps, canvas: [S.cw, S.ch],
         speed: S.speed, amp: S.amp, scale: S.scale, seed: S.seed, offX: S.offX, offY: S.offY,
+        masterKeys: S.masterKeys && Object.keys(S.masterKeys).length ? S.masterKeys : undefined,
         ease: S.ease, bez: S.bez,
         sliceMode: S.sliceMode, params: S[S.preset]
       }, null, 2)
@@ -757,6 +846,108 @@ class Component extends DCLogic {
   row(label, control) {
     return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
       React.createElement('span', { style: { fontSize: 12.5, color: '#c9c7c4' } }, label), control);
+  }
+
+  /*
+   * A slider that can be switched from a constant to a set of keyframes.
+   * ctx supplies where the value and the keys live, so the same control drives
+   * both preset parameters and the master ones.
+   */
+  kslider(label, min, max, step, ctx) {
+    const S = this.state;
+    const t = Math.round(frac(S.t) * 1000) / 1000;
+    const keys = ctx.keys;
+    const on = !!(keys && keys.length);
+    const raw = on ? sampleKeys(keys, frac(S.t)) : ctx.constVal;
+    const val = Math.round(raw / step) * step;
+    const shown = Math.round(val * 10000) / 10000;
+    const here = on && keyAt(keys, t);
+
+    const change = (e) => {
+      const v = Number(e.target.value);
+      if (!on) return ctx.onConst(v);
+      ctx.onKeys(upsertKey(keys, t, v));
+    };
+    const toggle = () => {
+      if (on) ctx.onKeys(null);                       // back to a plain constant
+      else ctx.onKeys([[t, ctx.constVal]]);           // first key where the playhead is
+    };
+    const dropKey = () => ctx.onKeys(removeKeyAt(keys, t));
+
+    const btn = (label2, title, active, onClick, extra) => React.createElement('button', {
+      onClick, title,
+      style: Object.assign({
+        fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, lineHeight: 1,
+        padding: '3px 5px', borderRadius: 3, cursor: 'pointer',
+        background: active ? '#5cc8e8' : '#22252a', color: active ? '#07272f' : '#75777d',
+        border: '1px solid ' + (active ? '#5cc8e8' : '#33363c')
+      }, extra || {})
+    }, label2);
+
+    const track = on ? React.createElement('div', {
+      style: { position: 'relative', height: 9, marginTop: 2, background: '#0f1113', border: '1px solid #26292f', borderRadius: 2 }
+    },
+      React.createElement('div', {
+        style: { position: 'absolute', left: (t * 100) + '%', top: -1, bottom: -1, width: 1, background: '#4a4f57' }
+      }),
+      keys.map((k, i) => React.createElement('div', {
+        key: i,
+        title: 'key at ' + k[0].toFixed(3) + ' = ' + (Math.round(k[1] * 10000) / 10000),
+        onClick: () => this.setState({ playing: false, t: k[0] }),
+        style: {
+          position: 'absolute', left: 'calc(' + (k[0] * 100) + '% - 3px)', top: 1,
+          width: 6, height: 6, borderRadius: 3, cursor: 'pointer',
+          background: Math.abs(k[0] - t) <= 0.0005 ? '#e7e5e2' : '#5cc8e8'
+        }
+      }))
+    ) : null;
+
+    return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 3 } },
+      React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 } },
+        React.createElement('span', { style: { fontSize: 11.5, color: '#c9c7c4', lineHeight: 1.2, flex: 1, minWidth: 0 } }, label),
+        btn('\u25C6', on ? 'Keyframed - click to go back to a fixed value' : 'Keyframe this over the loop', on, toggle),
+        on ? btn('\u2715', here ? 'Remove the key at the playhead' : 'No key at the playhead', false, dropKey,
+          { opacity: here ? 1 : 0.35 }) : null,
+        React.createElement('input', {
+          type: 'number', value: shown, min, max, step, onChange: change,
+          style: { width: 52, background: '#0f1113', color: '#e7e5e2', border: '1px solid #2c2f35', borderRadius: 3, padding: '3px 6px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5, textAlign: 'right' }
+        })
+      ),
+      React.createElement('input', { type: 'range', min, max, step, value: shown, onChange: change, style: { width: '100%', margin: 0, height: 14 } }),
+      track
+    );
+  }
+
+  /* Keys for a preset parameter live on the preset itself, so they travel with
+     saves and the JSON without any extra plumbing. */
+  pctx(name) {
+    const S = this.state, p = S[S.preset];
+    return {
+      constVal: p[name],
+      keys: (p._keys || {})[name] || null,
+      onConst: (v) => this.setState({ [S.preset]: Object.assign({}, p, { [name]: v }) }, () => this.syncJson()),
+      onKeys: (k) => {
+        const _keys = Object.assign({}, p._keys || {});
+        if (k) _keys[name] = k; else delete _keys[name];
+        const next = Object.assign({}, p);
+        if (Object.keys(_keys).length) next._keys = _keys; else delete next._keys;
+        this.setState({ [S.preset]: next }, () => this.syncJson());
+      }
+    };
+  }
+
+  mctx(name) {
+    const S = this.state;
+    return {
+      constVal: S[name],
+      keys: (S.masterKeys || {})[name] || null,
+      onConst: (v) => this.setState({ [name]: v }, () => this.syncJson()),
+      onKeys: (k) => {
+        const mk = Object.assign({}, S.masterKeys || {});
+        if (k) mk[name] = k; else delete mk[name];
+        this.setState({ masterKeys: mk }, () => this.syncJson());
+      }
+    };
   }
 
   slider(label, val, min, max, step, onChange) {
@@ -789,110 +980,112 @@ class Component extends DCLogic {
     const S = this.state, p = S[S.preset], sp = this.setP, ps = this.setPS;
     const c = [];
     if (S.preset === 'rain') {
-      c.push(this.slider('Particle count', p.count, 1, 300, 1, sp('count')));
-      c.push(this.slider('Scale min (× W)', p.scaleMin, 0.02, 0.4, 0.005, sp('scaleMin')));
-      c.push(this.slider('Scale max (× W)', p.scaleMax, 0.02, 0.6, 0.005, sp('scaleMax')));
-      c.push(this.slider('Fall speed tiers (int)', p.tiers, 1, 6, 1, sp('tiers')));
-      c.push(this.slider('Sway amount', p.sway, 0, 0.3, 0.005, sp('sway')));
-      c.push(this.slider('Rotation ±°', p.rot, 0, 45, 1, sp('rot')));
-      c.push(this.slider('Opacity min', p.opMin, 0, 1, 0.01, sp('opMin')));
-      c.push(this.slider('Opacity max', p.opMax, 0, 1, 0.01, sp('opMax')));
-      c.push(this.slider('Depth fade', p.depthFade, 0, 1, 0.05, sp('depthFade')));
-      c.push(this.slider('Wind (× W per loop, int)', p.wind, -4, 4, 1, sp('wind')));
-      c.push(this.slider('Density bias to start', p.bias, 0, 1, 0.05, sp('bias')));
+      c.push(this.kslider('Particle count', 1, 300, 1, this.pctx('count')));
+      c.push(this.kslider('Scale min (× W)', 0.02, 0.4, 0.005, this.pctx('scaleMin')));
+      c.push(this.kslider('Scale max (× W)', 0.02, 0.6, 0.005, this.pctx('scaleMax')));
+      c.push(this.kslider('Fall speed tiers (int)', 1, 6, 1, this.pctx('tiers')));
+      c.push(this.kslider('Sway amount', 0, 0.3, 0.005, this.pctx('sway')));
+      c.push(this.kslider('Rotation ±°', 0, 45, 1, this.pctx('rot')));
+      c.push(this.kslider('Opacity min', 0, 1, 0.01, this.pctx('opMin')));
+      c.push(this.kslider('Opacity max', 0, 1, 0.01, this.pctx('opMax')));
+      c.push(this.kslider('Depth fade', 0, 1, 0.05, this.pctx('depthFade')));
+      c.push(this.kslider('Wind (× W per loop, int)', -4, 4, 1, this.pctx('wind')));
+      c.push(this.kslider('Density bias to start', 0, 1, 0.05, this.pctx('bias')));
       c.push(this.select('Direction', p.dir, ['down', 'up', 'left', 'right'], ps('dir')));
       c.push(this.check('Mirroring', p.mirror, this.toggleP('mirror')));
       c.push(this.check('Additive glow', p.glow, this.toggleP('glow')));
     } else if (S.preset === 'scrollV' || S.preset === 'scrollH') {
-      c.push(this.slider('Tile size (× W)', p.tileScale, 0.1, 2, 0.01, sp('tileScale')));
-      c.push(this.slider('Tiles per loop (int)', p.tiles, 1, 8, 1, sp('tiles')));
-      c.push(this.slider('Drift angle °', p.angle, -45, 45, 1, sp('angle')));
+      c.push(this.kslider('Tile size (× W)', 0.1, 2, 0.01, this.pctx('tileScale')));
+      c.push(this.kslider('Tiles per loop (int)', 1, 8, 1, this.pctx('tiles')));
+      c.push(this.kslider('Drift angle °', -45, 45, 1, this.pctx('angle')));
       c.push(this.select('Direction', p.dir, S.preset === 'scrollV' ? ['down', 'up'] : ['left', 'right'], ps('dir')));
       c.push(this.check('Parallax layer', p.parallax, this.toggleP('parallax')));
       if (p.parallax) {
-        c.push(this.slider('Parallax rate (int ×)', p.pRate, 1, 6, 1, sp('pRate')));
-        c.push(this.slider('Parallax tile scale', p.pScale, 0.2, 1.5, 0.02, sp('pScale')));
-        c.push(this.slider('Parallax opacity', p.pOpacity, 0, 1, 0.05, sp('pOpacity')));
+        c.push(this.kslider('Parallax rate (int ×)', 1, 6, 1, this.pctx('pRate')));
+        c.push(this.kslider('Parallax tile scale', 0.2, 1.5, 0.02, this.pctx('pScale')));
+        c.push(this.kslider('Parallax opacity', 0, 1, 0.05, this.pctx('pOpacity')));
       }
     } else if (S.preset === 'orbit') {
-      c.push(this.slider('Count', p.count, 1, 60, 1, sp('count')));
-      c.push(this.slider('Size (× W)', p.size, 0.02, 0.6, 0.005, sp('size')));
-      c.push(this.slider('Radius X (× W)', p.radiusX, 0, 0.6, 0.005, sp('radiusX')));
-      c.push(this.slider('Radius Y (× H)', p.radiusY, 0, 0.6, 0.005, sp('radiusY')));
-      c.push(this.slider('Depth swing', p.depth, 0, 1, 0.05, sp('depth')));
-      c.push(this.slider('Opacity at back', p.opMin, 0, 1, 0.05, sp('opMin')));
-      c.push(this.slider('Speed tiers (int)', p.tiers, 1, 4, 1, sp('tiers')));
-      c.push(this.slider('Rotation ±°', p.rot, 0, 45, 1, sp('rot')));
+      c.push(this.kslider('Count', 1, 60, 1, this.pctx('count')));
+      c.push(this.kslider('Size (× W)', 0.02, 0.6, 0.005, this.pctx('size')));
+      c.push(this.kslider('Radius X (× W)', 0, 0.6, 0.005, this.pctx('radiusX')));
+      c.push(this.kslider('Radius Y (× H)', 0, 0.6, 0.005, this.pctx('radiusY')));
+      c.push(this.kslider('Depth swing', 0, 1, 0.05, this.pctx('depth')));
+      c.push(this.kslider('Opacity at back', 0, 1, 0.05, this.pctx('opMin')));
+      c.push(this.kslider('Speed tiers (int)', 1, 4, 1, this.pctx('tiers')));
+      c.push(this.kslider('Rotation ±°', 0, 45, 1, this.pctx('rot')));
       c.push(this.select('Direction', p.dir, ['cw', 'ccw'], ps('dir')));
     } else if (S.preset === 'fly') {
-      c.push(this.slider('Count', p.count, 1, 120, 1, sp('count')));
-      c.push(this.slider('Spread', p.spread, 0.05, 1.2, 0.01, sp('spread')));
-      c.push(this.slider('Scale at distance', p.startScale, 0.005, 0.3, 0.005, sp('startScale')));
-      c.push(this.slider('Scale at camera', p.endScale, 0.1, 2, 0.05, sp('endScale')));
-      c.push(this.slider('Approach curve', p.curve, 0.5, 5, 0.1, sp('curve')));
-      c.push(this.slider('Fade in/out', p.fade, 0.02, 0.49, 0.01, sp('fade')));
-      c.push(this.slider('Speed tiers (int)', p.tiers, 1, 4, 1, sp('tiers')));
-      c.push(this.slider('Rotation ±°', p.rot, 0, 180, 1, sp('rot')));
+      c.push(this.kslider('Count', 1, 120, 1, this.pctx('count')));
+      c.push(this.kslider('Spread', 0.05, 1.2, 0.01, this.pctx('spread')));
+      c.push(this.kslider('Scale at distance', 0.005, 0.3, 0.005, this.pctx('startScale')));
+      c.push(this.kslider('Scale at camera', 0.1, 2, 0.05, this.pctx('endScale')));
+      c.push(this.kslider('Approach curve', 0.5, 5, 0.1, this.pctx('curve')));
+      c.push(this.kslider('Fade in/out', 0.02, 0.49, 0.01, this.pctx('fade')));
+      c.push(this.kslider('Speed tiers (int)', 1, 4, 1, this.pctx('tiers')));
+      c.push(this.kslider('Rotation ±°', 0, 180, 1, this.pctx('rot')));
     } else if (S.preset === 'ripple') {
-      c.push(this.slider('Columns', p.cols, 1, 12, 1, sp('cols')));
-      c.push(this.slider('Rows', p.rows, 1, 16, 1, sp('rows')));
-      c.push(this.slider('Size (of cell)', p.size, 0.1, 1.4, 0.02, sp('size')));
-      c.push(this.slider('Pulse amount', p.amount, 0, 1, 0.01, sp('amount')));
-      c.push(this.slider('Cycles per loop (int)', p.cycles, 1, 6, 1, sp('cycles')));
-      c.push(this.slider('Falloff from centre', p.falloff, 0, 4, 0.05, sp('falloff')));
-      c.push(this.slider('Opacity dip', p.fade, 0, 1, 0.05, sp('fade')));
+      c.push(this.kslider('Columns', 1, 12, 1, this.pctx('cols')));
+      c.push(this.kslider('Rows', 1, 16, 1, this.pctx('rows')));
+      c.push(this.kslider('Size (of cell)', 0.1, 1.4, 0.02, this.pctx('size')));
+      c.push(this.kslider('Pulse amount', 0, 1, 0.01, this.pctx('amount')));
+      c.push(this.kslider('Cycles per loop (int)', 1, 6, 1, this.pctx('cycles')));
+      c.push(this.kslider('Falloff from centre', 0, 4, 0.05, this.pctx('falloff')));
+      c.push(this.kslider('Opacity dip', 0, 1, 0.05, this.pctx('fade')));
     } else if (S.preset === 'radial') {
-      c.push(this.slider('Count', p.count, 1, 24, 1, sp('count')));
-      c.push(this.slider('Radius (× W)', p.radius, 0, 0.6, 0.005, sp('radius')));
-      c.push(this.slider('Size (× W)', p.size, 0.02, 0.6, 0.005, sp('size')));
-      c.push(this.slider('Spin (segments/loop, int)', p.spin, 0, 8, 1, sp('spin')));
+      c.push(this.kslider('Count', 1, 24, 1, this.pctx('count')));
+      c.push(this.kslider('Radius (× W)', 0, 0.6, 0.005, this.pctx('radius')));
+      c.push(this.kslider('Size (× W)', 0.02, 0.6, 0.005, this.pctx('size')));
+      c.push(this.kslider('Spin (segments/loop, int)', 0, 8, 1, this.pctx('spin')));
       c.push(this.select('Direction', p.dir, ['cw', 'ccw'], ps('dir')));
       c.push(this.check('Face outward', p.faceOut, this.toggleP('faceOut')));
     } else if (S.preset === 'flag') {
-      c.push(this.slider('Fit (× canvas)', p.fit, 0.2, 0.95, 0.01, sp('fit')));
-      c.push(this.slider('Strips', p.strips, 4, 120, 1, sp('strips')));
-      c.push(this.slider('Amplitude', p.amp, 0, 0.3, 0.005, sp('amp')));
-      c.push(this.slider('Waves across', p.waves, 0, 5, 0.1, sp('waves')));
-      c.push(this.slider('Cycles per loop (int)', p.cycles, 1, 6, 1, sp('cycles')));
-      c.push(this.slider('Taper from edge', p.taper, 0, 1, 0.05, sp('taper')));
+      c.push(this.kslider('Fit (× canvas)', 0.2, 0.95, 0.01, this.pctx('fit')));
+      c.push(this.kslider('Strips', 4, 120, 1, this.pctx('strips')));
+      c.push(this.kslider('Amplitude', 0, 0.3, 0.005, this.pctx('amp')));
+      c.push(this.kslider('Waves across', 0, 5, 0.1, this.pctx('waves')));
+      c.push(this.kslider('Cycles per loop (int)', 1, 6, 1, this.pctx('cycles')));
+      c.push(this.kslider('Taper from edge', 0, 1, 0.05, this.pctx('taper')));
       c.push(this.select('Strip axis', p.axis, ['x', 'y'], ps('axis')));
     } else if (S.preset === 'path') {
-      c.push(this.slider('Fit (× canvas)', p.fit, 0.1, 0.95, 0.01, sp('fit')));
-      c.push(this.select('Loop', p.loop, ['ping-pong', 'closed'], ps('loop')));
-      c.push(this.slider('Spin (turns/loop, int)', p.spin, 0, 4, 1, sp('spin')));
+      c.push(this.kslider('Fit (× canvas)', 0.1, 0.95, 0.01, this.pctx('fit')));
+      c.push(this.select('Loop', p.loop, ['ping-pong', 'closed', 'restart'], ps('loop')));
+      c.push(this.kslider('Spin (turns/loop, int)', 0, 4, 1, this.pctx('spin')));
       c.push(this.check('Face along path', p.orient, this.toggleP('orient')));
       c.push(this.pathEditor());
       c.push(React.createElement('div', { 'data-wide': true, style: { fontSize: 11, lineHeight: 1.5, color: '#75777d' } },
         p.loop === 'closed'
-          ? 'Closed: the end point follows the start, so the sprite comes back round. Drag the blue start point and the two amber handles.'
-          : 'Ping-pong: the sprite runs out along the curve and back, which is what closes the loop. Drag the blue end points and the two amber handles.'));
+          ? 'Closed: the two ends are one point, so dragging either moves the join and the whole loop with it. Drag the curve itself to move everything.'
+          : p.loop === 'restart'
+            ? 'Restart: one pass from end to end, then a hard cut back to the start. This is the one loop mode that does not join up, so the seam will show — which is the point when you want something to enter over and over.'
+            : 'Ping-pong: the sprite runs out along the curve and back, which is what closes the loop. Drag the curve itself to move everything.'));
     } else {
-      c.push(this.slider('Fit (× canvas)', p.fit, 0.2, 0.95, 0.01, sp('fit')));
+      c.push(this.kslider('Fit (× canvas)', 0.2, 0.95, 0.01, this.pctx('fit')));
       if (S.preset === 'bob') {
-        c.push(this.slider('Bob amount (× H)', p.amp, 0, 0.25, 0.005, sp('amp')));
-        c.push(this.slider('Squash at bottom', p.squash, 0, 0.3, 0.005, sp('squash')));
+        c.push(this.kslider('Bob amount (× H)', 0, 0.25, 0.005, this.pctx('amp')));
+        c.push(this.kslider('Squash at bottom', 0, 0.3, 0.005, this.pctx('squash')));
       }
-      if (S.preset === 'breathe') c.push(this.slider('Breathe amount', p.amount, 0, 0.25, 0.005, sp('amount')));
-      if (S.preset === 'sway') c.push(this.slider('Sway ±°', p.deg, 0, 30, 0.5, sp('deg')));
+      if (S.preset === 'breathe') c.push(this.kslider('Breathe amount', 0, 0.25, 0.005, this.pctx('amount')));
+      if (S.preset === 'sway') c.push(this.kslider('Sway ±°', 0, 30, 0.5, this.pctx('deg')));
       if (S.preset === 'float') {
-        c.push(this.slider('Bob amount (× H)', p.amp, 0, 0.2, 0.005, sp('amp')));
-        c.push(this.slider('Drift X (× W)', p.driftX, 0, 0.2, 0.005, sp('driftX')));
-        c.push(this.slider('Drift Y (× H)', p.driftY, 0, 0.2, 0.005, sp('driftY')));
-        c.push(this.slider('Lissajous cycles X (int)', p.cyclesX, 1, 5, 1, sp('cyclesX')));
-        c.push(this.slider('Lissajous cycles Y (int)', p.cyclesY, 1, 5, 1, sp('cyclesY')));
+        c.push(this.kslider('Bob amount (× H)', 0, 0.2, 0.005, this.pctx('amp')));
+        c.push(this.kslider('Drift X (× W)', 0, 0.2, 0.005, this.pctx('driftX')));
+        c.push(this.kslider('Drift Y (× H)', 0, 0.2, 0.005, this.pctx('driftY')));
+        c.push(this.kslider('Lissajous cycles X (int)', 1, 5, 1, this.pctx('cyclesX')));
+        c.push(this.kslider('Lissajous cycles Y (int)', 1, 5, 1, this.pctx('cyclesY')));
       }
       if (S.preset === 'tumble') {
-        c.push(this.slider('Turns per loop (int)', p.turns, 0, 4, 1, sp('turns')));
-        c.push(this.slider('Drift X (× W)', p.driftX, 0, 0.4, 0.005, sp('driftX')));
-        c.push(this.slider('Drift Y (× H)', p.driftY, 0, 0.4, 0.005, sp('driftY')));
-        c.push(this.slider('Drift cycles X (int)', p.cyclesX, 1, 4, 1, sp('cyclesX')));
-        c.push(this.slider('Drift cycles Y (int)', p.cyclesY, 1, 4, 1, sp('cyclesY')));
+        c.push(this.kslider('Turns per loop (int)', 0, 4, 1, this.pctx('turns')));
+        c.push(this.kslider('Drift X (× W)', 0, 0.4, 0.005, this.pctx('driftX')));
+        c.push(this.kslider('Drift Y (× H)', 0, 0.4, 0.005, this.pctx('driftY')));
+        c.push(this.kslider('Drift cycles X (int)', 1, 4, 1, this.pctx('cyclesX')));
+        c.push(this.kslider('Drift cycles Y (int)', 1, 4, 1, this.pctx('cyclesY')));
         c.push(this.select('Direction', p.dir, ['cw', 'ccw'], ps('dir')));
       }
       if (S.preset === 'pop') {
-        c.push(this.slider('Overshoot', p.overshoot, 0, 0.6, 0.01, sp('overshoot')));
-        c.push(this.slider('Rise (of loop)', p.rise, 0.05, 0.6, 0.01, sp('rise')));
-        c.push(this.slider('Hold (of loop)', p.hold, 0, 0.9, 0.01, sp('hold')));
+        c.push(this.kslider('Overshoot', 0, 0.6, 0.01, this.pctx('overshoot')));
+        c.push(this.kslider('Rise (of loop)', 0.05, 0.6, 0.01, this.pctx('rise')));
+        c.push(this.kslider('Hold (of loop)', 0, 0.9, 0.01, this.pctx('hold')));
         c.push(React.createElement('div', { style: { fontSize: 11, lineHeight: 1.5, color: '#75777d' } },
           'The tail after rise + hold scales back to zero so render(0) matches render(1).'));
       }
@@ -907,57 +1100,81 @@ class Component extends DCLogic {
      sprite goes rather than how fast. Drawn at the canvas aspect so the path
      you see is the path you get. */
   pathEditor() {
-    const p = this.state.path, P = this.pathPoints(p);
-    const S = this.state;
+    const S = this.state, p = S.path, P = this.pathPoints(p);
+    const closed = p.loop === 'closed';
+    /* The view runs past the canvas on every side, so points can be dragged
+       off-canvas and still be grabbable. The inner rect is the canvas. */
+    const LO = -0.45, HI = 1.45, SPAN = HI - LO;
     const aspect = S.cw / S.ch;
-    const W = 250, H = Math.round(clamp(W / aspect, 90, 300)), pad = 14;
-    const X = (v) => pad + v * (W - pad * 2);
-    const Y = (v) => pad + v * (H - pad * 2);
-    const drag = (idx) => (e) => {
+    const W = 250, H = Math.round(clamp(W / aspect, 110, 320));
+    const X = (v) => ((v - LO) / SPAN) * W;
+    const Y = (v) => ((v - LO) / SPAN) * H;
+    const toX = (px) => LO + (px / W) * SPAN;
+    const toY = (py) => LO + (py / H) * SPAN;
+    const round = (v) => Math.round(v * 1000) / 1000;
+
+    /* idx null drags the whole path. In closed mode the two ends are the same
+       point, so moving one moves the other. */
+    const grab = (idx) => (e) => {
       e.preventDefault();
       const svg = e.currentTarget.ownerSVGElement;
+      const r0 = svg.getBoundingClientRect();
+      const start = { x: e.clientX, y: e.clientY, pts: this.state.path.pts.slice() };
       const move = (ev) => {
-        const r = svg.getBoundingClientRect();
-        const x = clamp(((ev.clientX - r.left) / r.width * W - pad) / (W - pad * 2), 0, 1);
-        const y = clamp(((ev.clientY - r.top) / r.height * H - pad) / (H - pad * 2), 0, 1);
-        const pts = this.state.path.pts.slice();
-        pts[idx * 2] = Math.round(x * 1000) / 1000;
-        pts[idx * 2 + 1] = Math.round(y * 1000) / 1000;
+        const r = svg.getBoundingClientRect() || r0;
+        const dx = ((ev.clientX - start.x) / r.width) * SPAN;
+        const dy = ((ev.clientY - start.y) / r.height) * SPAN;
+        const pts = start.pts.slice();
+        if (idx === null) {
+          for (let i = 0; i < 8; i += 2) {
+            pts[i] = round(clamp(start.pts[i] + dx, LO, HI));
+            pts[i + 1] = round(clamp(start.pts[i + 1] + dy, LO, HI));
+          }
+        } else {
+          const nx = round(clamp(toX((ev.clientX - r.left) / r.width * W), LO, HI));
+          const ny = round(clamp(toY((ev.clientY - r.top) / r.height * H), LO, HI));
+          pts[idx * 2] = nx; pts[idx * 2 + 1] = ny;
+          if (closed && (idx === 0 || idx === 3)) { pts[0] = nx; pts[1] = ny; pts[6] = nx; pts[7] = ny; }
+        }
         this.setState({ path: Object.assign({}, this.state.path, { pts }) }, () => this.syncJson());
       };
       const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
       window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
     };
+
     const line = [];
-    for (let i = 0; i <= 80; i++) {
-      const pt = bezPoint(P, i / 80);
+    for (let i = 0; i <= 90; i++) {
+      const pt = bezPoint(P, i / 90);
       line.push(X(pt[0]) + ',' + Y(pt[1]));
     }
-    const closed = p.loop === 'closed';
-    const dot = (i, fill, handler) => React.createElement('circle', {
-      key: 'p' + i, cx: X(P[i * 2]), cy: Y(P[i * 2 + 1]), r: 6, fill,
-      style: { cursor: handler ? 'grab' : 'not-allowed' },
-      onPointerDown: handler
+    const head = bezPoint(P, this.pathU(p, frac(S.t)));
+    const dot = (i, fill) => React.createElement('circle', {
+      key: 'p' + i, cx: X(P[i * 2]), cy: Y(P[i * 2 + 1]), r: 6.5, fill,
+      style: { cursor: 'grab' }, onPointerDown: grab(i)
     });
-    // The marker rides the same u the renderer uses, so it previews the timing.
-    const u = closed ? frac(S.t) : (frac(S.t) < 0.5 ? frac(S.t) * 2 : 2 - frac(S.t) * 2);
-    const head = bezPoint(P, u);
+
     return React.createElement('svg', {
       'data-wide': true, width: '100%', viewBox: '0 0 ' + W + ' ' + H,
       style: { background: '#0f1113', border: '1px solid #2a2d33', borderRadius: 3, touchAction: 'none', display: 'block', width: '100%' }
     },
-      React.createElement('rect', { x: pad, y: pad, width: W - pad * 2, height: H - pad * 2, fill: 'none', stroke: '#23262b' }),
+      // Everything outside this rect is off-canvas and will not be rendered.
+      React.createElement('rect', { x: X(0), y: Y(0), width: X(1) - X(0), height: Y(1) - Y(0), fill: '#141619', stroke: '#2f333a' }),
       React.createElement('line', { x1: X(P[0]), y1: Y(P[1]), x2: X(P[2]), y2: Y(P[3]), stroke: '#4a4f57', strokeDasharray: '3 3' }),
       React.createElement('line', { x1: X(P[6]), y1: Y(P[7]), x2: X(P[4]), y2: Y(P[5]), stroke: '#4a4f57', strokeDasharray: '3 3' }),
-      React.createElement('polyline', { points: line.join(' '), fill: 'none', stroke: '#5cc8e8', strokeWidth: 1.8 }),
-      React.createElement('circle', { cx: X(head[0]), cy: Y(head[1]), r: 4, fill: '#e7e5e2' }),
-      dot(0, '#5cc8e8', drag(0)),
-      dot(1, '#e0b64a', drag(1)),
-      dot(2, '#e0b64a', drag(2)),
-      // In closed mode the end tracks the start, so it is not draggable.
-      dot(3, closed ? '#3a3f47' : '#5cc8e8', closed ? null : drag(3))
+      // A fat transparent copy of the curve is the grab target for moving it all.
+      React.createElement('polyline', {
+        points: line.join(' '), fill: 'none', stroke: 'transparent', strokeWidth: 14,
+        style: { cursor: 'move' }, onPointerDown: grab(null)
+      }),
+      React.createElement('polyline', { points: line.join(' '), fill: 'none', stroke: '#5cc8e8', strokeWidth: 1.8, style: { pointerEvents: 'none' } }),
+      React.createElement('circle', { cx: X(head[0]), cy: Y(head[1]), r: 4, fill: '#e7e5e2', style: { pointerEvents: 'none' } }),
+      dot(0, '#5cc8e8'),
+      dot(1, '#e0b64a'),
+      dot(2, '#e0b64a'),
+      dot(3, closed ? '#2f7f96' : '#5cc8e8')
     );
   }
+
 
   bezierEditor() {
     const b = this.state.bez, W = 250, H = 150, pad = 18;
@@ -1065,17 +1282,22 @@ class Component extends DCLogic {
       ctlDuration: this.slider('Loop duration (s)', S.duration, 0.25, 6, 0.25, this.set('duration')),
       ctlFps: this.select('fps', S.fps, [24, 30, 60], this.set('fps')),
       ctlSpeed: this.slider('Master speed (preview)', S.speed, 0.25, 3, 0.05, this.set('speed')),
-      ctlAmp: this.slider('Master amplitude', S.amp, 0, 2, 0.05, this.set('amp')),
-      ctlScale: this.slider('Master scale', S.scale, 0.1, 3, 0.05, this.set('scale')),
+      ctlAmp: this.kslider('Master amplitude', 0, 2, 0.05, this.mctx('amp')),
+      ctlScale: this.kslider('Master scale', 0.1, 3, 0.05, this.mctx('scale')),
       ctlSeed: this.row('Seed', React.createElement('input', {
         type: 'number', value: S.seed,
         onChange: (e) => this.setState({ seed: Math.round(Number(e.target.value)) || 0 }, () => { this.build(); this.syncJson(); }),
         style: { width: '100%', boxSizing: 'border-box', background: '#0f1113', color: '#e7e5e2', border: '1px solid #2c2f35', borderRadius: 3, padding: '5px 7px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 12 }
       })),
-      ctlOffX: this.slider('Offset X', S.offX, -0.5, 0.5, 0.005, this.set('offX')),
-      ctlOffY: this.slider('Offset Y', S.offY, -0.5, 0.5, 0.005, this.set('offY')),
-      recentre: () => this.setState({ offX: 0, offY: 0 }, () => this.syncJson()),
-      isOffset: S.offX !== 0 || S.offY !== 0,
+      ctlOffX: this.kslider('Offset X', -0.5, 0.5, 0.005, this.mctx('offX')),
+      ctlOffY: this.kslider('Offset Y', -0.5, 0.5, 0.005, this.mctx('offY')),
+      recentre: () => {
+        const mk = Object.assign({}, S.masterKeys || {});
+        delete mk.offX; delete mk.offY;
+        this.setState({ offX: 0, offY: 0, masterKeys: mk }, () => this.syncJson());
+      },
+      isOffset: S.offX !== 0 || S.offY !== 0 ||
+        !!(S.masterKeys && (S.masterKeys.offX || S.masterKeys.offY)),
       reroll: () => this.setState({ seed: Math.floor(Math.random() * 100000) }, () => { this.build(); this.syncJson(); }),
 
       ctlEase: this.select('Curve', S.ease, ['linear', 'ease-in-out', 'elastic', 'custom'],
@@ -1127,7 +1349,8 @@ class Component extends DCLogic {
             preset: s.preset, duration: s.duration, fps: s.fps, cw: s.cw, ch: s.ch,
             canvasPreset: s.canvasPreset || 'custom', speed: s.speed, amp: s.amp,
             seed: s.seed, ease: s.ease, bez: s.bez.slice(), sliceMode: s.sliceMode,
-            scale: s.scale || 1, offX: s.offX || 0, offY: s.offY || 0
+            scale: s.scale || 1, offX: s.offX || 0, offY: s.offY || 0,
+            masterKeys: s.masterKeys || {}
           };
           patch[s.preset] = Object.assign({}, this.state[s.preset], s.params);
           this.setState(patch, () => { this.build(); this.slice(); this.syncJson(); });
@@ -1140,7 +1363,7 @@ class Component extends DCLogic {
         try {
           const o = JSON.parse(S.jsonText);
           const patch = {};
-          ['preset', 'duration', 'fps', 'speed', 'amp', 'scale', 'seed', 'offX', 'offY', 'ease', 'sliceMode'].forEach((k) => { if (o[k] !== undefined) patch[k] = o[k]; });
+          ['preset', 'duration', 'fps', 'speed', 'amp', 'scale', 'seed', 'offX', 'offY', 'masterKeys', 'ease', 'sliceMode'].forEach((k) => { if (o[k] !== undefined) patch[k] = o[k]; });
           if (Array.isArray(o.canvas)) { patch.cw = o.canvas[0]; patch.ch = o.canvas[1]; patch.canvasPreset = 'custom'; }
           if (Array.isArray(o.bez)) patch.bez = o.bez;
           const target = o.preset || S.preset;
