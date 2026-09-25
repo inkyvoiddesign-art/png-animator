@@ -94,7 +94,7 @@ class Component extends DCLogic {
     flag: { fit: 0.8, strips: 28, amp: 0.05, waves: 1, cycles: 1, axis: 'x', taper: 0 },
     path: { fit: 0.5, pts: [0.12, 0.5, 0.3, 0.12, 0.7, 0.88, 0.88, 0.5], loop: 'ping-pong', orient: false, spin: 0 },
     busy: false, progress: 0, progressLabel: '', ffmpegCmd: '',
-    saves: [], saveName: '',
+    saves: [], saveName: '', update: null,
     jsonText: '', jsonHint: 'Current preset + global settings. Edit and hit apply to restore a look.'
   };
 
@@ -110,8 +110,14 @@ class Component extends DCLogic {
       if (raw) this.setState({ saves: JSON.parse(raw) });
     } catch (e) {}
     if (NATIVE) this.offOpen = NATIVE.onOpenImage(({ name, bytes }) => this.loadImageBytes(name, bytes));
+    // Main only sends this when a newer release actually exists.
+    if (NATIVE && NATIVE.onUpdateAvailable) this.offUpdate = NATIVE.onUpdateAvailable((u) => this.setState({ update: u }));
   }
-  componentWillUnmount() { cancelAnimationFrame(this.raf); if (this.offOpen) this.offOpen(); }
+  componentWillUnmount() {
+    cancelAnimationFrame(this.raf);
+    if (this.offOpen) this.offOpen();
+    if (this.offUpdate) this.offUpdate();
+  }
 
   adopt(img, name) {
     this.img = img;
@@ -1019,6 +1025,15 @@ class Component extends DCLogic {
       stepBack: stepBy(-1), stepFwd: stepBy(1),
       onScrub: (e) => this.setState({ playing: false, t: Number(e.target.value) }),
       tVal: S.t, tLabel: S.t.toFixed(3), frameLabel: Math.round(S.t * frames) + '/' + frames,
+      hasUpdate: !!S.update,
+      updateLabel: S.update ? 'Version ' + S.update.version + ' is available' : '',
+      openUpdate: () => { if (NATIVE && NATIVE.openReleasePage) NATIVE.openReleasePage(); },
+      dismissUpdate: () => this.setState({ update: null }),
+      skipUpdate: () => {
+        const v = S.update && S.update.version;
+        if (v && NATIVE && NATIVE.skipUpdate) NATIVE.skipUpdate(v);
+        this.setState({ update: null });
+      },
       seamCheck: S.seamCheck, toggleSeam: () => this.setState({ seamCheck: !S.seamCheck }),
 
       presetList: PRESETS.map(([k, label]) => React.createElement('button', {

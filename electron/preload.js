@@ -23,6 +23,20 @@ contextBridge.exposeInMainWorld('pngAnimatorNative', {
   writeFrame: (dir, filename, data) => ipcRenderer.invoke('write-frame', { dir, filename, data }),
   revealPath: (target) => ipcRenderer.invoke('reveal-path', String(target)),
 
+  /* Opens the releases page in the real browser. Deliberately takes no URL:
+     main holds the address, so the page cannot redirect the user anywhere. */
+  openReleasePage: () => ipcRenderer.invoke('open-release-page'),
+
+  /* Stop offering this particular version. */
+  skipUpdate: (version) => ipcRenderer.invoke('skip-update-version', String(version || '')),
+
+  /* Fires only when a newer release exists. Returns an unsubscribe fn. */
+  onUpdateAvailable(cb) {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('update-available', handler);
+    return () => ipcRenderer.removeListener('update-available', handler);
+  },
+
   /* File > Open Image delivers { name, bytes }. Returns an unsubscribe fn. */
   onOpenImage(cb) {
     const handler = (_e, payload) => cb(payload);

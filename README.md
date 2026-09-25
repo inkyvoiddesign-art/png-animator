@@ -72,6 +72,19 @@ web page.
 gets no filesystem access beyond the preload API, and `write-frame` refuses any
 directory the user did not choose through the picker in the current session.
 
+### Network
+
+The app makes exactly one kind of request: on launch it asks the public GitHub
+releases API which release is latest, so it can tell you when a newer one
+exists. It is sent from the main process, so the renderer's CSP stays closed
+and the page itself never reaches the network. Nothing is sent but the request
+— no identifier, no version number, no telemetry — and the only thing GitHub
+learns is that some IP address asked. It fails silently when offline.
+
+Turn it off under **Help → Check for Updates on Launch**, and the app makes no
+network requests at all. Your images are never uploaded anywhere under any
+setting.
+
 ## Re-importing from Claude Design
 
 `tools/unpack-bundle.js` converts a Claude Design self-extracting HTML export

@@ -309,6 +309,16 @@
     <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#75777d;margin-left:auto">{{ presetLabel }} · {{ cw }}×{{ ch }} · {{ frameCount }} frames @ {{ fps }}fps</span>
   </div>
 
+  <sc-if value="{{ hasUpdate }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:#10222a;border:1px solid #1d4654;border-radius:4px;flex:none">
+      <span style="color:#5cc8e8;font-size:13px;line-height:1">&#8635;</span>
+      <div style="flex:1;min-width:0;font-size:12.5px;color:#c9c7c4">{{ updateLabel }}</div>
+      <button sc-camel-on-click="{{ openUpdate }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:6px 12px;background:#5cc8e8;color:#07272f;border:0;border-radius:3px;cursor:pointer;font-weight:500" style-hover="background:#7ed6f0">what's new</button>
+      <button sc-camel-on-click="{{ skipUpdate }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:6px 10px;background:#22252a;color:#8b8d93;border:1px solid #33363c;border-radius:3px;cursor:pointer" style-hover="background:#2c3037;color:#c9c7c4">skip this one</button>
+      <button sc-camel-on-click="{{ dismissUpdate }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:6px 9px;background:transparent;color:#75777d;border:0;border-radius:3px;cursor:pointer" style-hover="color:#c9c7c4">&#10005;</button>
+    </div>
+  </sc-if>
+
   <div style="flex:1;min-height:0;display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
 
     <div style="display:flex;flex-direction:column;gap:16px;min-height:0;overflow-y:auto">

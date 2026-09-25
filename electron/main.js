@@ -6,6 +6,7 @@ const {
   app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, shell
 } = require('electron');
 const store = require('./store');
+const updater = require('./update');
 
 const RENDERER = path.join(__dirname, '..', 'renderer');
 const SCHEME = 'png-animator';
@@ -59,7 +60,10 @@ function createWindow() {
   });
 
   if (store.get('windowMaximized', false)) mainWindow.maximize();
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    setTimeout(() => runUpdateCheck(false), 1200);
+  });
   mainWindow.loadURL(START_URL);
 
   const remember = () => {
@@ -109,6 +113,30 @@ async function openImageDialog() {
   }
 }
 
+/*
+ * manual=true means the user asked, so say something either way. On launch we
+ * only ever speak up when there is actually a new version - a dialog on every
+ * quiet start would be worse than no check at all.
+ */
+async function runUpdateCheck(manual) {
+  if (!manual && !store.get('checkUpdates', true)) return;
+  const result = await updater.check(app.getVersion(), manual ? '' : store.get('skippedVersion', ''));
+  if (result && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-available', result);
+    return;
+  }
+  if (manual) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'PNG Animator',
+      message: 'You are up to date.',
+      detail: 'Version ' + app.getVersion() + ' is the latest release.\n\n' +
+        'If you are offline this check quietly does nothing, so this message can also mean it could not reach GitHub.',
+      buttons: ['OK']
+    });
+  }
+}
+
 function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
@@ -123,7 +151,6 @@ function buildMenu() {
       label: '&View',
       submenu: [
         { role: 'reload' },
-        { role: 'toggleDevTools' },
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },
@@ -135,6 +162,17 @@ function buildMenu() {
     {
       label: '&Help',
       submenu: [
+        { label: 'Check for Updates Now', click: () => runUpdateCheck(true) },
+        {
+          label: 'Check for Updates on Launch',
+          type: 'checkbox',
+          checked: store.get('checkUpdates', true),
+          click: (item) => {
+            store.set('checkUpdates', item.checked);
+            store.set('skippedVersion', '');
+          }
+        },
+        { type: 'separator' },
         {
           label: 'About PNG Animator',
           click: () => dialog.showMessageBox(mainWindow, {
@@ -189,6 +227,18 @@ ipcMain.handle('write-frame', async (_e, { dir, filename, data }) => {
   const target = resolveWithin(dir, filename);
   if (!target) throw new Error('invalid frame name: ' + filename);
   await fsp.writeFile(target, Buffer.from(data));
+});
+
+ipcMain.handle('open-release-page', () => {
+  // The renderer never supplies a URL; main decides, so the page cannot be
+  // talked into opening something arbitrary.
+  shell.openExternal(updater.RELEASES_PAGE);
+  return { ok: true };
+});
+
+ipcMain.handle('skip-update-version', (_e, version) => {
+  store.set('skippedVersion', String(version || '').slice(0, 32));
+  return { ok: true };
 });
 
 ipcMain.handle('reveal-path', async (_e, target) => {
