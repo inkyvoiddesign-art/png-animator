@@ -7,7 +7,9 @@ const HB_W = 399, HB_H = 335;
 
 const PRESETS = [
   ['rain', 'Rain'], ['scrollV', 'Scroll · vertical'], ['scrollH', 'Scroll · horizontal'],
-  ['bob', 'Idle bob'], ['breathe', 'Breathe'], ['sway', 'Sway'], ['float', 'Float'], ['pop', 'Pop']
+  ['bob', 'Idle bob'], ['breathe', 'Breathe'], ['sway', 'Sway'], ['float', 'Float'], ['pop', 'Pop'],
+  ['orbit', 'Orbit'], ['fly', 'Fly-through'], ['tumble', 'Tumble'],
+  ['ripple', 'Ripple grid'], ['radial', 'Radial array'], ['flag', 'Flag wave'], ['path', 'Path']
 ];
 const CANVAS_PRESETS = {
   '1080×1920 vertical': [1080, 1920], '1080×1350 portrait': [1080, 1350],
@@ -45,6 +47,18 @@ const wrapAxis = (centre, extent, size) => {
   return frac((centre + size / 2) / span) * span - size;
 };
 
+/* A cubic Bezier in the plane: P is [x0,y0, c1x,c1y, c2x,c2y, x1,y1] in
+   normalised canvas coordinates. The Path preset walks this curve. */
+function bezPoint(P, u) {
+  const m = 1 - u, a = m * m * m, b = 3 * m * m * u, c = 3 * m * u * u, d = u * u * u;
+  return [a * P[0] + b * P[2] + c * P[4] + d * P[6], a * P[1] + b * P[3] + c * P[5] + d * P[7]];
+}
+function bezTangent(P, u) {
+  const m = 1 - u, a = 3 * m * m, b = 6 * m * u, c = 3 * u * u;
+  return [a * (P[2] - P[0]) + b * (P[4] - P[2]) + c * (P[6] - P[4]),
+          a * (P[3] - P[1]) + b * (P[5] - P[3]) + c * (P[7] - P[5])];
+}
+
 function bezierY(p1x, p1y, p2x, p2y, x) {
   const bx = (u) => 3 * u * (1 - u) * (1 - u) * p1x + 3 * u * u * (1 - u) * p2x + u * u * u;
   const by = (u) => 3 * u * (1 - u) * (1 - u) * p1y + 3 * u * u * (1 - u) * p2y + u * u * u;
@@ -72,6 +86,13 @@ class Component extends DCLogic {
     sway: { fit: 0.7, deg: 6 },
     float: { fit: 0.7, amp: 0.04, driftX: 0.03, driftY: 0.02, cyclesX: 1, cyclesY: 2 },
     pop: { fit: 0.7, overshoot: 0.18, rise: 0.3, hold: 0.45 },
+    orbit: { count: 10, radiusX: 0.3, radiusY: 0.12, size: 0.16, tiers: 1, depth: 0.35, opMin: 0.55, rot: 0, dir: 'cw' },
+    fly: { count: 26, spread: 0.5, startScale: 0.04, endScale: 0.85, tiers: 1, fade: 0.18, rot: 0, curve: 2 },
+    tumble: { fit: 0.6, turns: 1, driftX: 0.12, driftY: 0.06, cyclesX: 1, cyclesY: 1, dir: 'cw' },
+    ripple: { cols: 4, rows: 6, size: 0.8, cycles: 1, amount: 0.35, falloff: 1.2, fade: 0.3 },
+    radial: { count: 6, radius: 0.3, size: 0.2, spin: 1, faceOut: true, dir: 'cw' },
+    flag: { fit: 0.8, strips: 28, amp: 0.05, waves: 1, cycles: 1, axis: 'x', taper: 0 },
+    path: { fit: 0.5, pts: [0.12, 0.5, 0.3, 0.12, 0.7, 0.88, 0.88, 0.5], loop: 'ping-pong', orient: false, spin: 0 },
     busy: false, progress: 0, progressLabel: '', ffmpegCmd: '',
     saves: [], saveName: '',
     jsonText: '', jsonHint: 'Current preset + global settings. Edit and hit apply to restore a look.'
@@ -280,6 +301,12 @@ class Component extends DCLogic {
     const p = S[S.preset];
     if (S.preset === 'rain') return this.rRain(g, t, W, H, p);
     if (S.preset === 'scrollV' || S.preset === 'scrollH') return this.rScroll(g, t, W, H, p, S.preset === 'scrollV');
+    if (S.preset === 'orbit') return this.rOrbit(g, t, W, H, p);
+    if (S.preset === 'fly') return this.rFly(g, t, W, H, p);
+    if (S.preset === 'ripple') return this.rRipple(g, t, W, H, p);
+    if (S.preset === 'radial') return this.rRadial(g, t, W, H, p);
+    if (S.preset === 'flag') return this.rFlag(g, t, W, H, p);
+    if (S.preset === 'path') return this.rPath(g, t, W, H, p);
     return this.rSingle(g, t, W, H, p, S.preset);
   }
 
@@ -370,6 +397,11 @@ class Component extends DCLogic {
     } else if (preset === 'float') {
       dy = -p.amp * H * A * u + p.driftY * H * A * Math.sin(TAU * (t * Math.round(p.cyclesY) + 0.25));
       dx = p.driftX * W * A * Math.sin(TAU * t * Math.round(p.cyclesX));
+    } else if (preset === 'tumble') {
+      // A whole number of turns lands back where it started, so the loop closes.
+      rot = TAU * Math.round(p.turns) * t * (p.dir === 'ccw' ? -1 : 1);
+      dx = p.driftX * W * A * Math.sin(TAU * t * Math.round(p.cyclesX));
+      dy = -p.driftY * H * A * Math.sin(TAU * t * Math.round(p.cyclesY));
     } else if (preset === 'pop') {
       const rise = clamp(p.rise, 0.05, 0.9), hold = clamp(p.hold, 0, 1 - rise);
       let s;
@@ -389,6 +421,192 @@ class Component extends DCLogic {
     g.scale(sx, sy);
     g.drawImage(src, -w / 2, -h, w, h);
     g.restore();
+  }
+
+  /* Every preset below closes its loop by construction: anything driven by t
+     completes a whole number of cycles, and anything that wraps fades to zero
+     at the seam so the jump is invisible. */
+
+  spriteFor(q) {
+    const n = this.sprites.length;
+    return this.sprites[Math.floor(q.s * n) % n];
+  }
+
+  // Sprites riding an ellipse. The size and opacity swing between the near and
+  // far halves is what sells it as a ring rather than a flat circle.
+  rOrbit(g, t, W, H, p) {
+    const S = this.state, A = S.amp;
+    const count = Math.min(Math.round(p.count), this.parts.length);
+    const cx = W / 2 + S.offX * W, cy = H / 2 + S.offY * H;
+    const sign = p.dir === 'ccw' ? -1 : 1;
+    const items = [];
+    for (let i = 0; i < count; i++) {
+      const q = this.parts[i];
+      const tier = 1 + Math.floor(q.rTier * Math.max(1, Math.round(p.tiers)));
+      const ang = TAU * (q.phase + t * tier) * sign;
+      const dep = Math.sin(ang);
+      items.push({
+        x: cx + p.radiusX * W * Math.cos(ang),
+        y: cy + p.radiusY * H * dep,
+        k: 1 + clamp(p.depth, 0, 1) * dep * A,
+        dep,
+        op: clamp(lerp(p.opMin, 1, (dep + 1) / 2), 0, 1),
+        rot: q.rRot * (p.rot * Math.PI / 180),
+        spr: this.spriteFor(q)
+      });
+    }
+    items.sort((a, b) => a.dep - b.dep);
+    for (const it of items) {
+      const w = W * p.size * S.scale * Math.max(0.01, it.k);
+      const h = w * (this.baseH / this.baseW);
+      g.save();
+      g.translate(it.x, it.y);
+      g.rotate(it.rot);
+      g.globalAlpha = it.op;
+      g.drawImage(it.spr, -w / 2, -h / 2, w, h);
+      g.restore();
+    }
+    g.globalAlpha = 1;
+  }
+
+  // Sprites rushing past the camera. Depth wraps, so each one fades to nothing
+  // at both ends of its travel or the wrap would show as a pop.
+  rFly(g, t, W, H, p) {
+    const S = this.state;
+    const count = Math.min(Math.round(p.count), this.parts.length);
+    const cx = W / 2 + S.offX * W, cy = H / 2 + S.offY * H;
+    const fade = clamp(p.fade, 0.01, 0.49);
+    const items = [];
+    for (let i = 0; i < count; i++) {
+      const q = this.parts[i];
+      const tier = 1 + Math.floor(q.rTier * Math.max(1, Math.round(p.tiers)));
+      const z = frac(q.phase + t * tier);
+      const e = Math.pow(z, Math.max(0.2, p.curve));
+      const ang = q.x0 * TAU;
+      const dist = p.spread * Math.min(W, H) * e;
+      items.push({
+        x: cx + Math.cos(ang) * dist,
+        y: cy + Math.sin(ang) * dist,
+        k: lerp(p.startScale, p.endScale, e),
+        z,
+        op: clamp(Math.min(z, 1 - z) / fade, 0, 1),
+        rot: q.rRot * (p.rot * Math.PI / 180),
+        spr: this.spriteFor(q)
+      });
+    }
+    items.sort((a, b) => a.z - b.z);
+    for (const it of items) {
+      const w = W * it.k * S.scale, h = w * (this.baseH / this.baseW);
+      g.save();
+      g.translate(it.x, it.y);
+      g.rotate(it.rot);
+      g.globalAlpha = it.op;
+      g.drawImage(it.spr, -w / 2, -h / 2, w, h);
+      g.restore();
+    }
+    g.globalAlpha = 1;
+  }
+
+  // A grid where the pulse travels outward from the centre. Whole cycles only,
+  // so the wave is back where it started at the end of the loop.
+  rRipple(g, t, W, H, p) {
+    const S = this.state, A = S.amp, src = this.sprites[0];
+    const cols = Math.max(1, Math.round(p.cols)), rows = Math.max(1, Math.round(p.rows));
+    const cw = W / cols, ch = H / rows;
+    const base = Math.min(cw, ch) * p.size * S.scale;
+    const bw = base, bh = base * (src.height / src.width);
+    const cycles = Math.max(1, Math.round(p.cycles));
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = cw * (c + 0.5) + S.offX * W, y = ch * (r + 0.5) + S.offY * H;
+        const dx = (c + 0.5) / cols - 0.5, dy = (r + 0.5) / rows - 0.5;
+        const d = Math.sqrt(dx * dx + dy * dy) * 2;
+        const u = Math.sin(TAU * (t * cycles - d * p.falloff));
+        const k = Math.max(0.01, 1 + p.amount * A * u);
+        g.save();
+        g.translate(x, y);
+        g.globalAlpha = clamp(1 - p.fade * (1 - (u + 1) / 2), 0, 1);
+        g.drawImage(src, -bw * k / 2, -bh * k / 2, bw * k, bh * k);
+        g.restore();
+      }
+    }
+    g.globalAlpha = 1;
+  }
+
+  // N copies on a ring. Turning the ring by a whole number of its own segments
+  // lands it back on an identical arrangement, so any integer spin closes.
+  rRadial(g, t, W, H, p) {
+    const S = this.state, src = this.sprites[0];
+    const n = Math.max(1, Math.round(p.count));
+    const cx = W / 2 + S.offX * W, cy = H / 2 + S.offY * H;
+    const sign = p.dir === 'ccw' ? -1 : 1;
+    const spin = TAU * (Math.round(p.spin) / n) * t * sign;
+    const w = W * p.size * S.scale, h = w * (src.height / src.width);
+    for (let i = 0; i < n; i++) {
+      const ang = TAU * (i / n) + spin;
+      g.save();
+      g.translate(cx + Math.cos(ang) * p.radius * W, cy + Math.sin(ang) * p.radius * W);
+      if (p.faceOut) g.rotate(ang + Math.PI / 2);
+      g.drawImage(src, -w / 2, -h / 2, w, h);
+      g.restore();
+    }
+  }
+
+  // The sprite cut into strips, each displaced by a travelling sine. The only
+  // preset that deforms the artwork rather than moving it.
+  rFlag(g, t, W, H, p) {
+    const S = this.state, A = S.amp, src = this.sprites[0];
+    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7) * S.scale;
+    const w = src.width * k, h = src.height * k;
+    const x0 = W / 2 - w / 2 + S.offX * W, y0 = H / 2 - h / 2 + S.offY * H;
+    const n = Math.max(2, Math.round(p.strips));
+    const across = p.axis === 'x';
+    const cycles = Math.max(1, Math.round(p.cycles));
+    const waves = Math.max(0, p.waves);
+    for (let i = 0; i < n; i++) {
+      const f0 = i / n, f1 = (i + 1) / n;
+      const u = Math.sin(TAU * (t * cycles - f0 * waves));
+      const taper = lerp(1, f0, clamp(p.taper, 0, 1));
+      const d = p.amp * (across ? H : W) * A * u * taper;
+      if (across) {
+        // The +0.6px overlap hides the seam between neighbouring strips.
+        g.drawImage(src, src.width * f0, 0, src.width * (f1 - f0), src.height,
+          x0 + w * f0, y0 + d, w * (f1 - f0) + 0.6, h);
+      } else {
+        g.drawImage(src, 0, src.height * f0, src.width, src.height * (f1 - f0),
+          x0 + d, y0 + h * f0, w, h * (f1 - f0) + 0.6);
+      }
+    }
+  }
+
+  // The sprite follows a cubic Bezier you drag out. An open curve cannot loop
+  // on its own, so ping-pong retraces it and closed ties the end to the start.
+  rPath(g, t, W, H, p) {
+    const S = this.state, src = this.sprites[0];
+    const k = Math.min(W * 0.85 / src.width, H * 0.85 / src.height) * (p.fit / 0.7) * S.scale;
+    const w = src.width * k, h = src.height * k;
+    const P = this.pathPoints(p);
+    const u = p.loop === 'closed' ? t : (t < 0.5 ? t * 2 : 2 - t * 2);
+    const pt = bezPoint(P, u);
+    g.save();
+    g.translate(pt[0] * W + S.offX * W, pt[1] * H + S.offY * H);
+    if (p.orient) {
+      const tan = bezTangent(P, u);
+      let a = Math.atan2(tan[1] * H, tan[0] * W);
+      if (p.loop !== 'closed' && t >= 0.5) a += Math.PI; // facing the way it travels
+      g.rotate(a);
+    }
+    if (p.spin) g.rotate(TAU * Math.round(p.spin) * t);
+    g.drawImage(src, -w / 2, -h / 2, w, h);
+    g.restore();
+  }
+
+  /* In closed mode the end point becomes the start point so the curve joins
+     up. The stored points are untouched, so switching back restores them. */
+  pathPoints(p) {
+    const P = p.pts.slice();
+    if (p.loop === 'closed') { P[6] = P[0]; P[7] = P[1]; }
+    return P;
   }
 
   async stepFrames(cb) {
@@ -590,6 +808,58 @@ class Component extends DCLogic {
         c.push(this.slider('Parallax tile scale', p.pScale, 0.2, 1.5, 0.02, sp('pScale')));
         c.push(this.slider('Parallax opacity', p.pOpacity, 0, 1, 0.05, sp('pOpacity')));
       }
+    } else if (S.preset === 'orbit') {
+      c.push(this.slider('Count', p.count, 1, 60, 1, sp('count')));
+      c.push(this.slider('Size (× W)', p.size, 0.02, 0.6, 0.005, sp('size')));
+      c.push(this.slider('Radius X (× W)', p.radiusX, 0, 0.6, 0.005, sp('radiusX')));
+      c.push(this.slider('Radius Y (× H)', p.radiusY, 0, 0.6, 0.005, sp('radiusY')));
+      c.push(this.slider('Depth swing', p.depth, 0, 1, 0.05, sp('depth')));
+      c.push(this.slider('Opacity at back', p.opMin, 0, 1, 0.05, sp('opMin')));
+      c.push(this.slider('Speed tiers (int)', p.tiers, 1, 4, 1, sp('tiers')));
+      c.push(this.slider('Rotation ±°', p.rot, 0, 45, 1, sp('rot')));
+      c.push(this.select('Direction', p.dir, ['cw', 'ccw'], ps('dir')));
+    } else if (S.preset === 'fly') {
+      c.push(this.slider('Count', p.count, 1, 120, 1, sp('count')));
+      c.push(this.slider('Spread', p.spread, 0.05, 1.2, 0.01, sp('spread')));
+      c.push(this.slider('Scale at distance', p.startScale, 0.005, 0.3, 0.005, sp('startScale')));
+      c.push(this.slider('Scale at camera', p.endScale, 0.1, 2, 0.05, sp('endScale')));
+      c.push(this.slider('Approach curve', p.curve, 0.5, 5, 0.1, sp('curve')));
+      c.push(this.slider('Fade in/out', p.fade, 0.02, 0.49, 0.01, sp('fade')));
+      c.push(this.slider('Speed tiers (int)', p.tiers, 1, 4, 1, sp('tiers')));
+      c.push(this.slider('Rotation ±°', p.rot, 0, 180, 1, sp('rot')));
+    } else if (S.preset === 'ripple') {
+      c.push(this.slider('Columns', p.cols, 1, 12, 1, sp('cols')));
+      c.push(this.slider('Rows', p.rows, 1, 16, 1, sp('rows')));
+      c.push(this.slider('Size (of cell)', p.size, 0.1, 1.4, 0.02, sp('size')));
+      c.push(this.slider('Pulse amount', p.amount, 0, 1, 0.01, sp('amount')));
+      c.push(this.slider('Cycles per loop (int)', p.cycles, 1, 6, 1, sp('cycles')));
+      c.push(this.slider('Falloff from centre', p.falloff, 0, 4, 0.05, sp('falloff')));
+      c.push(this.slider('Opacity dip', p.fade, 0, 1, 0.05, sp('fade')));
+    } else if (S.preset === 'radial') {
+      c.push(this.slider('Count', p.count, 1, 24, 1, sp('count')));
+      c.push(this.slider('Radius (× W)', p.radius, 0, 0.6, 0.005, sp('radius')));
+      c.push(this.slider('Size (× W)', p.size, 0.02, 0.6, 0.005, sp('size')));
+      c.push(this.slider('Spin (segments/loop, int)', p.spin, 0, 8, 1, sp('spin')));
+      c.push(this.select('Direction', p.dir, ['cw', 'ccw'], ps('dir')));
+      c.push(this.check('Face outward', p.faceOut, this.toggleP('faceOut')));
+    } else if (S.preset === 'flag') {
+      c.push(this.slider('Fit (× canvas)', p.fit, 0.2, 0.95, 0.01, sp('fit')));
+      c.push(this.slider('Strips', p.strips, 4, 120, 1, sp('strips')));
+      c.push(this.slider('Amplitude', p.amp, 0, 0.3, 0.005, sp('amp')));
+      c.push(this.slider('Waves across', p.waves, 0, 5, 0.1, sp('waves')));
+      c.push(this.slider('Cycles per loop (int)', p.cycles, 1, 6, 1, sp('cycles')));
+      c.push(this.slider('Taper from edge', p.taper, 0, 1, 0.05, sp('taper')));
+      c.push(this.select('Strip axis', p.axis, ['x', 'y'], ps('axis')));
+    } else if (S.preset === 'path') {
+      c.push(this.slider('Fit (× canvas)', p.fit, 0.1, 0.95, 0.01, sp('fit')));
+      c.push(this.select('Loop', p.loop, ['ping-pong', 'closed'], ps('loop')));
+      c.push(this.slider('Spin (turns/loop, int)', p.spin, 0, 4, 1, sp('spin')));
+      c.push(this.check('Face along path', p.orient, this.toggleP('orient')));
+      c.push(this.pathEditor());
+      c.push(React.createElement('div', { 'data-wide': true, style: { fontSize: 11, lineHeight: 1.5, color: '#75777d' } },
+        p.loop === 'closed'
+          ? 'Closed: the end point follows the start, so the sprite comes back round. Drag the blue start point and the two amber handles.'
+          : 'Ping-pong: the sprite runs out along the curve and back, which is what closes the loop. Drag the blue end points and the two amber handles.'));
     } else {
       c.push(this.slider('Fit (× canvas)', p.fit, 0.2, 0.95, 0.01, sp('fit')));
       if (S.preset === 'bob') {
@@ -605,6 +875,14 @@ class Component extends DCLogic {
         c.push(this.slider('Lissajous cycles X (int)', p.cyclesX, 1, 5, 1, sp('cyclesX')));
         c.push(this.slider('Lissajous cycles Y (int)', p.cyclesY, 1, 5, 1, sp('cyclesY')));
       }
+      if (S.preset === 'tumble') {
+        c.push(this.slider('Turns per loop (int)', p.turns, 0, 4, 1, sp('turns')));
+        c.push(this.slider('Drift X (× W)', p.driftX, 0, 0.4, 0.005, sp('driftX')));
+        c.push(this.slider('Drift Y (× H)', p.driftY, 0, 0.4, 0.005, sp('driftY')));
+        c.push(this.slider('Drift cycles X (int)', p.cyclesX, 1, 4, 1, sp('cyclesX')));
+        c.push(this.slider('Drift cycles Y (int)', p.cyclesY, 1, 4, 1, sp('cyclesY')));
+        c.push(this.select('Direction', p.dir, ['cw', 'ccw'], ps('dir')));
+      }
       if (S.preset === 'pop') {
         c.push(this.slider('Overshoot', p.overshoot, 0, 0.6, 0.01, sp('overshoot')));
         c.push(this.slider('Rise (of loop)', p.rise, 0.05, 0.6, 0.01, sp('rise')));
@@ -613,7 +891,66 @@ class Component extends DCLogic {
           'The tail after rise + hold scales back to zero so render(0) matches render(1).'));
       }
     }
-    return c.map((el, i) => React.createElement('div', { key: i }, el));
+    return c.map((el, i) => React.createElement('div', {
+      key: i,
+      style: el && el.props && el.props['data-wide'] ? { gridColumn: '1 / -1' } : null
+    }, el));
+  }
+
+  /* The same drag mechanics as the easing editor, but the curve is where the
+     sprite goes rather than how fast. Drawn at the canvas aspect so the path
+     you see is the path you get. */
+  pathEditor() {
+    const p = this.state.path, P = this.pathPoints(p);
+    const S = this.state;
+    const aspect = S.cw / S.ch;
+    const W = 250, H = Math.round(clamp(W / aspect, 90, 300)), pad = 14;
+    const X = (v) => pad + v * (W - pad * 2);
+    const Y = (v) => pad + v * (H - pad * 2);
+    const drag = (idx) => (e) => {
+      e.preventDefault();
+      const svg = e.currentTarget.ownerSVGElement;
+      const move = (ev) => {
+        const r = svg.getBoundingClientRect();
+        const x = clamp(((ev.clientX - r.left) / r.width * W - pad) / (W - pad * 2), 0, 1);
+        const y = clamp(((ev.clientY - r.top) / r.height * H - pad) / (H - pad * 2), 0, 1);
+        const pts = this.state.path.pts.slice();
+        pts[idx * 2] = Math.round(x * 1000) / 1000;
+        pts[idx * 2 + 1] = Math.round(y * 1000) / 1000;
+        this.setState({ path: Object.assign({}, this.state.path, { pts }) }, () => this.syncJson());
+      };
+      const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    };
+    const line = [];
+    for (let i = 0; i <= 80; i++) {
+      const pt = bezPoint(P, i / 80);
+      line.push(X(pt[0]) + ',' + Y(pt[1]));
+    }
+    const closed = p.loop === 'closed';
+    const dot = (i, fill, handler) => React.createElement('circle', {
+      key: 'p' + i, cx: X(P[i * 2]), cy: Y(P[i * 2 + 1]), r: 6, fill,
+      style: { cursor: handler ? 'grab' : 'not-allowed' },
+      onPointerDown: handler
+    });
+    // The marker rides the same u the renderer uses, so it previews the timing.
+    const u = closed ? frac(S.t) : (frac(S.t) < 0.5 ? frac(S.t) * 2 : 2 - frac(S.t) * 2);
+    const head = bezPoint(P, u);
+    return React.createElement('svg', {
+      'data-wide': true, width: '100%', viewBox: '0 0 ' + W + ' ' + H,
+      style: { background: '#0f1113', border: '1px solid #2a2d33', borderRadius: 3, touchAction: 'none', display: 'block', width: '100%' }
+    },
+      React.createElement('rect', { x: pad, y: pad, width: W - pad * 2, height: H - pad * 2, fill: 'none', stroke: '#23262b' }),
+      React.createElement('line', { x1: X(P[0]), y1: Y(P[1]), x2: X(P[2]), y2: Y(P[3]), stroke: '#4a4f57', strokeDasharray: '3 3' }),
+      React.createElement('line', { x1: X(P[6]), y1: Y(P[7]), x2: X(P[4]), y2: Y(P[5]), stroke: '#4a4f57', strokeDasharray: '3 3' }),
+      React.createElement('polyline', { points: line.join(' '), fill: 'none', stroke: '#5cc8e8', strokeWidth: 1.8 }),
+      React.createElement('circle', { cx: X(head[0]), cy: Y(head[1]), r: 4, fill: '#e7e5e2' }),
+      dot(0, '#5cc8e8', drag(0)),
+      dot(1, '#e0b64a', drag(1)),
+      dot(2, '#e0b64a', drag(2)),
+      // In closed mode the end tracks the start, so it is not draggable.
+      dot(3, closed ? '#3a3f47' : '#5cc8e8', closed ? null : drag(3))
+    );
   }
 
   bezierEditor() {
