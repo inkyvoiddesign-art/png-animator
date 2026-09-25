@@ -5,7 +5,7 @@
 <!-- The dc-runtime evaluates the x-dc component logic through new Function,
      so script-src cannot drop unsafe-eval. Everything else is closed: no
      network origin is reachable, and only bundled files can be loaded. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' blob: data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' blob: data:">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>window.__resources = {
   "https://unpkg.com/react@18.3.1/umd/react.production.min.js": "vendor/react.production.min.js",
@@ -288,8 +288,18 @@
 }
 </style>
 <script src="vendor/jszip.min.js"></script>
-<!-- mp4-muxer 5.2.2 (MIT) — wraps WebCodecs output in an MP4 container. -->
-<script src="vendor/mp4-muxer.js"></script>
+<!--
+  mediabunny 1.60.0 (MPL-2.0) — encodes the transparent WebM. Chromium's
+  VideoEncoder refuses alpha:'keep' for every codec, so the alpha plane has to
+  be encoded as its own VP9 stream and carried in the container's
+  BlockAdditional; mediabunny does that split (in a blob: worker, hence
+  worker-src above). It is ESM-only, and the app logic runs inside a
+  text/x-dc script that cannot be a module, so it is exposed globally.
+-->
+<script type="module">
+  import * as Mediabunny from './vendor/mediabunny.mjs';
+  window.Mediabunny = Mediabunny;
+</script>
 <style>
   html, body { margin: 0; padding: 0; background: #0d0e10; }
   a { color: #5cc8e8; }

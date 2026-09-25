@@ -33,32 +33,6 @@ const TAU = Math.PI * 2;
 const NATIVE = typeof window !== 'undefined' ? window.pngAnimatorNative : null;
 const bytesOf = async (blob) => new Uint8Array(await blob.arrayBuffer());
 
-/*
- * H.264 codec strings, most capable first. A level has to be high enough for
- * the resolution, and there is no reliable way to compute which from here, so
- * we ask the encoder and take the first it accepts. Profiles descend too:
- * High is what Chromium actually ships, but Main and Baseline are tried in
- * case a build only carries those.
- */
-const AVC_CANDIDATES = [
-  'avc1.640034', 'avc1.640033', 'avc1.640032', 'avc1.64002a', 'avc1.640028',
-  'avc1.4d0034', 'avc1.4d0032', 'avc1.4d002a', 'avc1.4d0028',
-  'avc1.420034', 'avc1.420032', 'avc1.42002a', 'avc1.420028'
-];
-
-async function avcCodec(W, H, fps, bitrate) {
-  if (typeof VideoEncoder === 'undefined') return null;
-  for (const codec of AVC_CANDIDATES) {
-    try {
-      const probe = await VideoEncoder.isConfigSupported({
-        codec, width: W, height: H, bitrate, framerate: fps
-      });
-      if (probe && probe.supported) return codec;
-    } catch (err) { /* malformed string for this build; try the next */ }
-  }
-  return null;
-}
-
 function bezierY(p1x, p1y, p2x, p2y, x) {
   const bx = (u) => 3 * u * (1 - u) * (1 - u) * p1x + 3 * u * u * (1 - u) * p2x + u * u * u;
   const by = (u) => 3 * u * (1 - u) * (1 - u) * p1y + 3 * u * u * (1 - u) * p2y + u * u * u;
@@ -537,7 +511,65 @@ class Component extends DCLogic {
     this.setState({ busy: false, progressLabel: '' });
   };
 
-  exportWebm = () => this.recordTo('video/webm;codecs=vp9', false, '.webm');
+  /*
+   * Same story as the MP4 below — MediaRecorder timestamps by wall clock and
+   * silently drops frames it can't keep up with, which for a loop is worse
+   * than the wrong frame rate: a dropped frame is missing animation. The
+   * catch is transparency. Chromium's VideoEncoder refuses alpha:'keep' for
+   * every codec, so WebM alpha has to be a second encoded stream carried
+   * beside the colour one; mediabunny does that split and the muxing, and its
+   * add() resolves on encoder backpressure, so nothing is ever dropped.
+   */
+  exportWebm = async () => {
+    if (this.state.busy) return;
+    const S = this.state, fps = S.fps, MB = window.Mediabunny;
+    if (!MB) {
+      await this.recordTo('video/webm;codecs=vp9', false, '.webm');
+      this.setState({ ffmpegCmd: 'Recorded without mediabunny — this file has a variable frame rate and may be missing frames. Use the PNG sequence.' });
+      return;
+    }
+
+    // Both the colour and alpha streams are 4:2:0, which halves the chroma
+    // planes, so odd dimensions have nowhere to round to.
+    const W = S.cw - (S.cw % 2), H = S.ch - (S.ch % 2);
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const g = cv.getContext('2d', { alpha: true });
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+
+    this.setState({ busy: true, progress: 0, progressLabel: 'encoding…', ffmpegCmd: '' });
+    this.flatten = false; // transparency is the whole point of this export
+    this.exporting = true;
+
+    try {
+      const output = new MB.Output({
+        format: new MB.WebMOutputFormat(),
+        target: new MB.BufferTarget()
+      });
+      const source = new MB.CanvasSource(cv, {
+        codec: 'vp9', bitrate: 12000000, alpha: 'keep'
+      });
+      output.addVideoTrack(source, { frameRate: fps });
+      await output.start();
+
+      const n = this.frames();
+      for (let i = 0; i < n; i++) {
+        this.render(g, i / n, W, H, true);
+        // Resolves once the encoder is ready for more, so the loop can never
+        // outrun it and lose a frame.
+        await source.add(i / fps, 1 / fps);
+        this.setState({ progress: (i + 1) / n, progressLabel: 'frame ' + (i + 1) + ' / ' + n });
+      }
+      await output.finalize();
+      this.save(new Blob([output.target.buffer], { type: 'video/webm' }), '.webm');
+    } catch (err) {
+      alert('WebM encoding failed: ' + (err && err.message ? err.message : err) +
+        '\n\nExport the PNG sequence instead.');
+    } finally {
+      this.exporting = false; this.flatten = false;
+      this.setState({ busy: false, progressLabel: '' });
+    }
+  };
 
   /*
    * MediaRecorder stamps each frame with the wall-clock moment requestFrame()
@@ -550,80 +582,49 @@ class Component extends DCLogic {
    */
   exportMp4 = async () => {
     if (this.state.busy) return;
-    const S = this.state, fps = S.fps;
-    const W = S.cw - (S.cw % 2), H = S.ch - (S.ch % 2); // H.264 needs even dimensions
-    const bitrate = 12000000;
-
-    const codec = window.Mp4Muxer ? await avcCodec(W, H, fps, bitrate) : null;
-    if (!codec) {
-      // No WebCodecs: fall back to the recorder, which still produces a
-      // playable file, just not one an editor will accept. Say so rather than
-      // handing back a bad export that looks like a good one.
+    const S = this.state, fps = S.fps, MB = window.Mediabunny;
+    if (!MB) {
       const m = ['video/mp4;codecs=avc1.42E01E', 'video/mp4']
         .find((x) => window.MediaRecorder && MediaRecorder.isTypeSupported(x));
       if (!m) { alert('MP4 export is not supported in this browser. Export the PNG sequence and run the ffmpeg command.'); return; }
       await this.recordTo(m, true, '.mp4');
-      this.setState({ ffmpegCmd: 'Recorded without WebCodecs — this file has a variable frame rate and will not import into an editor. Use the PNG sequence.' });
+      this.setState({ ffmpegCmd: 'Recorded without mediabunny — this file has a variable frame rate and may be missing frames. Use the PNG sequence.' });
       return;
     }
 
+    const W = S.cw - (S.cw % 2), H = S.ch - (S.ch % 2); // H.264 needs even dimensions
     const cv = document.createElement('canvas');
     cv.width = W; cv.height = H;
     const g = cv.getContext('2d', { alpha: false });
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
 
-    const muxer = new Mp4Muxer.Muxer({
-      target: new Mp4Muxer.ArrayBufferTarget(),
-      // frameRate lets the muxer snap timestamps to the exact frame grid.
-      video: { codec: 'avc', width: W, height: H, frameRate: fps },
-      fastStart: 'in-memory'
-    });
-
-    let failure = null;
-    const encoder = new VideoEncoder({
-      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-      error: (err) => { failure = err; }
-    });
-    encoder.configure({
-      codec, width: W, height: H, bitrate, framerate: fps,
-      latencyMode: 'quality', // nothing here is realtime, so spend the time
-      avc: { format: 'avc' }  // avcC in-band, which is what the muxer wants
-    });
-
     this.setState({ busy: true, progress: 0, progressLabel: 'encoding…', ffmpegCmd: '' });
-    this.flatten = 'flatten';
+    this.flatten = 'flatten'; // MP4 has no alpha, so composite the background
     this.exporting = true;
 
     try {
+      const output = new MB.Output({
+        format: new MB.Mp4OutputFormat({ fastStart: 'in-memory' }),
+        target: new MB.BufferTarget()
+      });
+      const source = new MB.CanvasSource(cv, {
+        codec: 'avc', bitrate: 12000000, alpha: 'discard'
+      });
+      output.addVideoTrack(source, { frameRate: fps });
+      await output.start();
+
       const n = this.frames();
       for (let i = 0; i < n; i++) {
-        if (failure) throw failure;
         this.render(g, i / n, W, H, true);
-        const frame = new VideoFrame(cv, {
-          timestamp: Math.round((i * 1000000) / fps),
-          duration: Math.round(1000000 / fps)
-        });
-        // A keyframe a second keeps scrubbing responsive in an editor without
-        // paying for an all-intra file.
-        encoder.encode(frame, { keyFrame: i % Math.max(1, Math.round(fps)) === 0 });
-        frame.close();
+        await source.add(i / fps, 1 / fps);
         this.setState({ progress: (i + 1) / n, progressLabel: 'frame ' + (i + 1) + ' / ' + n });
-        // Hand the queue back to the encoder so it drains and the window
-        // keeps painting; without this the whole export blocks the frame.
-        while (encoder.encodeQueueSize > 8 && !failure) {
-          await new Promise((r) => setTimeout(r, 4));
-        }
-        await new Promise((r) => setTimeout(r, 0));
       }
-      await encoder.flush();
-      if (failure) throw failure;
-      muxer.finalize();
-      this.save(new Blob([muxer.target.buffer], { type: 'video/mp4' }), '.mp4');
+      await output.finalize();
+      this.save(new Blob([output.target.buffer], { type: 'video/mp4' }), '.mp4');
     } catch (err) {
       alert('MP4 encoding failed: ' + (err && err.message ? err.message : err) +
         '\n\nExport the PNG sequence and run the ffmpeg command instead.');
     } finally {
-      if (encoder.state !== 'closed') encoder.close();
       this.exporting = false; this.flatten = false;
       this.setState({ busy: false, progressLabel: '' });
     }
