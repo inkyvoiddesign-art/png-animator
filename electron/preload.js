@@ -23,6 +23,17 @@ contextBridge.exposeInMainWorld('pngAnimatorNative', {
   writeFrame: (dir, filename, data) => ipcRenderer.invoke('write-frame', { dir, filename, data }),
   revealPath: (target) => ipcRenderer.invoke('reveal-path', String(target)),
 
+  /* Saved looks, kept on disk in userData rather than localStorage, so each
+     one can carry its source PNG as well as its settings. */
+  looks: {
+    list: () => ipcRenderer.invoke('looks-list'),
+    save: (payload) => ipcRenderer.invoke('looks-save', payload),
+    load: (id) => ipcRenderer.invoke('looks-load', String(id)),
+    remove: (id) => ipcRenderer.invoke('looks-delete', String(id)),
+    exportOne: (id, defaultName) => ipcRenderer.invoke('looks-export', { id: String(id), defaultName }),
+    importOne: () => ipcRenderer.invoke('looks-import')
+  },
+
   /* Opens the releases page in the real browser. Deliberately takes no URL:
      main holds the address, so the page cannot redirect the user anywhere. */
   openReleasePage: () => ipcRenderer.invoke('open-release-page'),

@@ -66,6 +66,23 @@ Anything the page can do natively goes through `electron/preload.js`:
 browser behaviour when it is absent, so the same source still runs as a plain
 web page.
 
+### Saved looks
+
+Looks live in `userData/looks`, two files each:
+
+    <id>.json   name, timestamp and settings — small, so listing reads only these
+    <id>.png    the exact source image, byte for byte
+
+They were in `localStorage` before 1.0.5, which capped them at a few megabytes
+and left no room for the artwork — so reloading a look gave the parameters back
+but not the PNG they belonged to. Anything already in `localStorage` is moved
+across on first launch (settings only, since those saves never held an image)
+and the old key is cleared.
+
+**Export** writes one self-contained `.pnganim` file: the same JSON with the
+image base64'd inside, so a look can be handed to someone else or kept beside
+the artwork it was made for. **Import** reads one back.
+
 ### Security posture
 
 `contextIsolation` and `sandbox` are on, `nodeIntegration` is off. The renderer

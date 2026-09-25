@@ -376,6 +376,9 @@
         <div style="display:flex;gap:8px">
           <input type="text" value="{{ saveName }}" sc-camel-on-change="{{ onSaveName }}" placeholder="name this look" style="flex:1;min-width:0;background:#0f1113;color:#e7e5e2;border:1px solid #2c2f35;border-radius:3px;padding:6px 8px;font-family:'IBM Plex Mono',monospace;font-size:11.5px">
           <button sc-camel-on-click="{{ saveCurrent }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:6px 12px;background:#5cc8e8;color:#07272f;border:0;border-radius:3px;cursor:pointer;font-weight:500" style-hover="background:#7ed6f0">save</button>
+          <sc-if value="{{ canImport }}" hint-placeholder-val="{{ true }}">
+            <button sc-camel-on-click="{{ importLook }}" title="Open a .pnganim file" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:6px 10px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer" style-hover="background:#2c3037">import</button>
+          </sc-if>
         </div>
         <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px">
           <sc-for list="{{ saves }}" as="item" hint-placeholder-count="3">
@@ -384,13 +387,16 @@
                 <div style="font-size:12px;color:#e7e5e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.name }}</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#75777d;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.meta }}</div>
               </div>
+              <sc-if value="{{ item.canExport }}" hint-placeholder-val="{{ true }}">
+                <button sc-camel-on-click="{{ item.exportOne }}" title="Save this look as a file" style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;white-space:nowrap;padding:5px 8px;background:#22252a;color:#8b8d93;border:1px solid #33363c;border-radius:3px;cursor:pointer" style-hover="background:#2c3037;color:#c9c7c4">&#8681;</button>
+              </sc-if>
               <button sc-camel-on-click="{{ item.load }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;padding:5px 9px;font-size:10.5px" style-hover="background:#2c3037">load</button>
               <button sc-camel-on-click="{{ item.remove }}" style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;padding:7px 12px;background:#22252a;color:#c9c7c4;border:1px solid #33363c;border-radius:3px;cursor:pointer;padding:5px 8px;font-size:10.5px;color:#8b8d93" style-hover="background:#3a2020;color:#e08a8a">✕</button>
             </div>
           </sc-for>
         </div>
         <sc-if value="{{ noSaves }}" hint-placeholder-val="{{ false }}">
-          <div style="font-size:11px;line-height:1.5;color:#75777d;text-wrap:pretty">Nothing saved yet. A save stores the preset, its parameters, the seed, canvas, duration, fps and easing — reload it any time to get the exact same animation back.</div>
+          <div style="font-size:11px;line-height:1.5;color:#75777d;text-wrap:pretty">Nothing saved yet. A save stores the PNG along with the preset, its parameters, slicing, keyframes and easing — reload it any time and the whole thing comes back. Use import to open a look someone sent you.</div>
         </sc-if>
       </div>
 

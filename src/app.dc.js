@@ -154,10 +154,14 @@ class Component extends DCLogic {
 
   componentDidMount() {
     this.raf = requestAnimationFrame(this.loop);
-    try {
-      const raw = localStorage.getItem('pngAnimator.saves');
-      if (raw) this.setState({ saves: JSON.parse(raw) });
-    } catch (e) {}
+    if (NATIVE && NATIVE.looks) {
+      this.migrateLocalSaves().then(() => this.refreshLooks());
+    } else {
+      try {
+        const raw = localStorage.getItem('pngAnimator.saves');
+        if (raw) this.setState({ saves: JSON.parse(raw) });
+      } catch (e) {}
+    }
     if (NATIVE) this.offOpen = NATIVE.onOpenImage(({ name, bytes }) => this.loadImageBytes(name, bytes));
     // Main only sends this when a newer release actually exists.
     if (NATIVE && NATIVE.onUpdateAvailable) this.offUpdate = NATIVE.onUpdateAvailable((u) => this.setState({ update: u }));
@@ -184,10 +188,16 @@ class Component extends DCLogic {
       srcName: name, srcDims: img.width + '×' + img.height,
       borderPct: (op / tot) * 100,
       sliceMode: 'whole', detected: null, detectSummary: 'not run'
-    }, () => { this.slice(); this.build(); this.drawThumb(); this.syncJson(); });
+    }, () => {
+      this.slice(); this.build(); this.drawThumb(); this.syncJson();
+      if (this.pendingLook) { const fn = this.pendingLook; this.pendingLook = null; fn(); }
+    });
   }
 
+  /* The bytes are kept as well as the decoded image, because a saved look is
+     no use without the PNG it was built for. */
   loadImageBytes(name, bytes) {
+    this.srcBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     const url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
     const img = new Image();
     img.onload = () => { this.adopt(img, name); URL.revokeObjectURL(url); };
@@ -196,6 +206,7 @@ class Component extends DCLogic {
 
   onFileLoad = (file) => {
     if (!file) return;
+    file.arrayBuffer().then((b) => { this.srcBytes = new Uint8Array(b); }).catch(() => { this.srcBytes = null; });
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => { this.adopt(img, file.name); URL.revokeObjectURL(url); };
@@ -799,9 +810,37 @@ class Component extends DCLogic {
     });
   };
 
+  /* In the desktop app looks live on disk, where there is room for the source
+     PNG. In a plain browser they stay in localStorage, settings only, because
+     a few megabytes will not hold the artwork. */
   persist(saves) {
     this.setState({ saves });
+    if (NATIVE && NATIVE.looks) return;
     try { localStorage.setItem('pngAnimator.saves', JSON.stringify(saves)); } catch (e) {}
+  }
+
+  async refreshLooks() {
+    if (!(NATIVE && NATIVE.looks)) return;
+    try {
+      const list = await NATIVE.looks.list();
+      this.setState({ saves: list.map((r) => ({ id: r.id, name: r.name, snap: r.snap, hasImage: r.hasImage })) });
+    } catch (err) { /* leave the list as it is */ }
+  }
+
+  /* One-off move of anything already in localStorage. Those have no artwork,
+     which is exactly the limitation this replaces, but losing them would be
+     worse than carrying them over settings-only. */
+  async migrateLocalSaves() {
+    if (!(NATIVE && NATIVE.looks)) return;
+    let old = null;
+    try { old = JSON.parse(localStorage.getItem('pngAnimator.saves') || 'null'); } catch (e) {}
+    if (!Array.isArray(old) || !old.length) return;
+    const existing = await NATIVE.looks.list();
+    if (existing.length) { try { localStorage.removeItem('pngAnimator.saves'); } catch (e) {} return; }
+    for (const rec of old.slice().reverse()) {
+      try { await NATIVE.looks.save({ name: rec.name, snap: rec.snap, imageName: null, imageBytes: null }); } catch (e) {}
+    }
+    try { localStorage.removeItem('pngAnimator.saves'); } catch (e) {}
   }
 
   snapshot() {
@@ -810,6 +849,10 @@ class Component extends DCLogic {
       preset: S.preset, duration: S.duration, fps: S.fps, cw: S.cw, ch: S.ch,
       canvasPreset: S.canvasPreset, speed: S.speed, amp: S.amp, seed: S.seed,
       ease: S.ease, bez: S.bez.slice(), sliceMode: S.sliceMode,
+      /* Without the regions, a detect look reloads as sliceMode 'detect' with
+         nothing to slice, and silently animates the whole image instead. */
+      detected: S.detected ? JSON.parse(JSON.stringify(S.detected)) : null,
+      rows: S.rows, cols: S.cols, minArea: S.minArea,
       scale: S.scale, offX: S.offX, offY: S.offY,
       masterKeys: JSON.parse(JSON.stringify(S.masterKeys || {})),
       params: Object.assign({}, S[S.preset])
@@ -1333,29 +1376,71 @@ class Component extends DCLogic {
       onSaveName: (e) => this.setState({ saveName: e.target.value }),
       saveCount: S.saves.length ? S.saves.length + ' saved' : '',
       noSaves: S.saves.length === 0,
-      saveCurrent: () => {
+      saveCurrent: async () => {
         const snap = this.snapshot();
         const label = (PRESETS.find((x) => x[0] === snap.preset) || ['', snap.preset])[1];
         const name = (S.saveName || '').trim() || label + ' ' + (S.saves.length + 1);
+        if (NATIVE && NATIVE.looks) {
+          await NATIVE.looks.save({
+            name, snap,
+            imageName: S.srcName,
+            // The artwork goes with it, so the look reloads complete.
+            imageBytes: this.srcBytes || null
+          });
+          this.setState({ saveName: '' });
+          return this.refreshLooks();
+        }
         this.persist([{ id: Date.now(), name, snap }].concat(S.saves));
         this.setState({ saveName: '' });
       },
+      importLook: async () => {
+        if (!(NATIVE && NATIVE.looks)) return;
+        try {
+          const res = await NATIVE.looks.importOne();
+          if (res && res.rec) await this.refreshLooks();
+        } catch (err) { alert('Could not import that file: ' + (err && err.message ? err.message : err)); }
+      },
+      canImport: !!(NATIVE && NATIVE.looks),
       saves: S.saves.map((rec) => ({
         name: rec.name,
-        meta: (PRESETS.find((x) => x[0] === rec.snap.preset) || ['', rec.snap.preset])[1] + ' · ' + rec.snap.cw + '×' + rec.snap.ch + ' · ' + rec.snap.duration + 's ' + rec.snap.fps + 'fps · seed ' + rec.snap.seed,
+        meta: (PRESETS.find((x) => x[0] === rec.snap.preset) || ['', rec.snap.preset])[1] + ' · ' + rec.snap.cw + '×' + rec.snap.ch + ' · ' + rec.snap.duration + 's ' + rec.snap.fps + 'fps' + (rec.hasImage ? ' · with artwork' : ''),
+        canExport: !!(NATIVE && NATIVE.looks),
+        exportOne: async () => {
+          if (!(NATIVE && NATIVE.looks)) return;
+          try { await NATIVE.looks.exportOne(rec.id, rec.name); }
+          catch (err) { alert('Could not export that look: ' + (err && err.message ? err.message : err)); }
+        },
         load: () => {
           const s = rec.snap;
           const patch = {
             preset: s.preset, duration: s.duration, fps: s.fps, cw: s.cw, ch: s.ch,
             canvasPreset: s.canvasPreset || 'custom', speed: s.speed, amp: s.amp,
             seed: s.seed, ease: s.ease, bez: s.bez.slice(), sliceMode: s.sliceMode,
+            detected: s.detected || null,
+            detectSummary: s.detected ? 'using ' + s.detected.length + ' region(s)' : 'not run',
+            rows: s.rows === undefined ? this.state.rows : s.rows,
+            cols: s.cols === undefined ? this.state.cols : s.cols,
+            minArea: s.minArea === undefined ? this.state.minArea : s.minArea,
             scale: s.scale || 1, offX: s.offX || 0, offY: s.offY || 0,
             masterKeys: s.masterKeys || {}
           };
           patch[s.preset] = Object.assign({}, this.state[s.preset], s.params);
-          this.setState(patch, () => { this.build(); this.slice(); this.syncJson(); });
+          const apply = () => this.setState(patch, () => { this.build(); this.slice(); this.syncJson(); });
+          if (NATIVE && NATIVE.looks && rec.hasImage) {
+            // Bring the artwork back first; adopt() resets slicing, so the
+            // settings have to land after it.
+            NATIVE.looks.load(rec.id).then((res) => {
+              if (res && res.imageBytes) {
+                this.pendingLook = apply;
+                this.loadImageBytes(res.rec.imageName || 'saved.png', res.imageBytes);
+              } else apply();
+            }).catch(apply);
+          } else apply();
         },
-        remove: () => this.persist(S.saves.filter((x) => x.id !== rec.id))
+        remove: async () => {
+          if (NATIVE && NATIVE.looks) { await NATIVE.looks.remove(rec.id); return this.refreshLooks(); }
+          this.persist(S.saves.filter((x) => x.id !== rec.id));
+        }
       })),
       jsonText: S.jsonText, jsonHint: S.jsonHint,
       onJsonEdit: (e) => this.setState({ jsonText: e.target.value }),

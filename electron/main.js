@@ -7,6 +7,7 @@ const {
 } = require('electron');
 const store = require('./store');
 const updater = require('./update');
+const looks = require('./looks');
 
 const RENDERER = path.join(__dirname, '..', 'renderer');
 const SCHEME = 'png-animator';
@@ -227,6 +228,37 @@ ipcMain.handle('write-frame', async (_e, { dir, filename, data }) => {
   const target = resolveWithin(dir, filename);
   if (!target) throw new Error('invalid frame name: ' + filename);
   await fsp.writeFile(target, Buffer.from(data));
+});
+
+ipcMain.handle('looks-list', () => looks.list());
+ipcMain.handle('looks-save', (_e, payload) => looks.save(payload || {}));
+ipcMain.handle('looks-load', (_e, id) => looks.load(id));
+ipcMain.handle('looks-delete', (_e, id) => looks.remove(id));
+
+ipcMain.handle('looks-export', async (_e, { id, defaultName }) => {
+  const res = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export look',
+    defaultPath: path.join(store.get('lastLookDir', app.getPath('documents')),
+      String(defaultName || 'look').replace(/[^\w.-]+/g, '-') + looks.EXT),
+    filters: [{ name: 'PNG Animator look', extensions: [looks.EXT.replace(/^\./, '')] }]
+  });
+  if (res.canceled || !res.filePath) return { canceled: true };
+  store.set('lastLookDir', path.dirname(res.filePath));
+  await looks.exportTo(id, res.filePath);
+  return { path: res.filePath };
+});
+
+ipcMain.handle('looks-import', async () => {
+  const res = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import look',
+    defaultPath: store.get('lastLookDir', app.getPath('documents')),
+    properties: ['openFile'],
+    filters: [{ name: 'PNG Animator look', extensions: [looks.EXT.replace(/^\./, '')] }]
+  });
+  if (res.canceled || !res.filePaths.length) return { canceled: true };
+  store.set('lastLookDir', path.dirname(res.filePaths[0]));
+  const rec = await looks.importFrom(res.filePaths[0]);
+  return { rec };
 });
 
 ipcMain.handle('open-release-page', () => {
